@@ -12,6 +12,11 @@
         app:actionProviderClass="androidx.mediarouter.app.MediaRouteActionProvider"
         app:showAsAction="always" />
     <item
+        android:id="@+id/action_tv"
+        android:icon="@drawable/ic_tv"
+        android:title="TV home screen"
+        app:showAsAction="ifRoom" />
+    <item
         android:id="@+id/action_clear"
         android:title="Delete converted copies"
         app:showAsAction="never" />

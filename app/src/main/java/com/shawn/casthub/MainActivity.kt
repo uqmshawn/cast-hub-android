@@ -152,6 +152,10 @@ class MainActivity : AppCompatActivity() {
             loadVideos()
             return true
         }
+        if (item.itemId == R.id.action_tv) {
+            showTvMenu()
+            return true
+        }
         if (item.itemId == R.id.action_clear) {
             if (converter.isBusy) {
                 toast("Wait for the current conversion to finish")
@@ -396,6 +400,101 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---------------- TV home screen (custom receiver) ----------------
+
+    private fun showTvMenu() {
+        if (Prefs.appId(this).isBlank()) {
+            askAppId()
+            return
+        }
+        val items = arrayOf(
+            "Show home screen on TV",
+            "Send a message to the TV",
+            "Show a website on the TV",
+            "Weather location",
+            "TV name",
+            "Clock: 12 / 24 hour",
+            "Receiver App ID",
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle("TV home screen")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> sendTv(org.json.JSONObject().put("type", "home"))
+                    1 -> askText("Message for the TV", "e.g. Dinner's ready!", "") { text ->
+                        sendTv(org.json.JSONObject().put("type", "message").put("text", text).put("seconds", 20))
+                    }
+                    2 -> askText("Show a website", "https://…", "https://") { url ->
+                        sendTv(org.json.JSONObject().put("type", "web").put("url", url))
+                    }
+                    3 -> askText("Weather location", "Suburb or city", Prefs.get(this, "place", "Brisbane")) { place ->
+                        Prefs.put(this, "place", place)
+                        sendTv(org.json.JSONObject().put("type", "config").put("place", place))
+                    }
+                    4 -> askText("TV name", "Shown on the home screen", Prefs.get(this, "tvName", "Lounge TV")) { name ->
+                        Prefs.put(this, "tvName", name)
+                        sendTv(org.json.JSONObject().put("type", "config").put("name", name))
+                    }
+                    5 -> {
+                        val h24 = Prefs.get(this, "h24", "false") != "true"
+                        Prefs.put(this, "h24", h24.toString())
+                        sendTv(org.json.JSONObject().put("type", "config").put("h24", h24))
+                    }
+                    6 -> askAppId()
+                }
+            }
+            .show()
+    }
+
+    private fun askAppId() {
+        askText(
+            "Receiver App ID",
+            "8-character ID from the Cast Developer Console (blank = standard player)",
+            Prefs.appId(this),
+        ) { id ->
+            Prefs.setAppId(this, id)
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Restart needed")
+                .setMessage("Cast Hub will restart to use the new TV screen. Then tap the cast icon and pick your TV again.")
+                .setPositiveButton("Restart") { _, _ ->
+                    startActivity(Intent.makeRestartActivityTask(componentName))
+                    Runtime.getRuntime().exit(0)
+                }
+                .setCancelable(false)
+                .show()
+        }
+    }
+
+    private fun sendTv(json: org.json.JSONObject) {
+        val session = connectedSession { sendTv(json) } ?: return
+        try {
+            session.sendMessage(TV_NAMESPACE, json.toString()).setResultCallback { status ->
+                if (!status.isSuccess) toast("The TV didn't respond — is the Cast Hub home screen running?")
+            }
+        } catch (e: Exception) {
+            toast("Couldn't reach the TV: ${e.message}")
+        }
+    }
+
+    private fun askText(title: String, hint: String, initial: String, onOk: (String) -> Unit) {
+        val field = EditText(this).apply {
+            setText(initial)
+            this.hint = hint
+            setSelection(text.length)
+        }
+        val box = android.widget.FrameLayout(this).apply {
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(field)
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton("OK") { _, _ -> onOk(field.text.toString().trim()) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     // ---------------- web links ----------------
 
     private fun handleShare(intent: Intent?) {
@@ -424,4 +523,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+
+    companion object {
+        const val TV_NAMESPACE = "urn:x-cast:com.shawn.casthub"
+    }
 }

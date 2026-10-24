@@ -19,7 +19,9 @@ class CastOptionsProvider : OptionsProvider {
             .setExpandedControllerActivityClassName(ExpandedControlsActivity::class.java.name)
             .build()
         return CastOptions.Builder()
-            .setReceiverApplicationId(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID)
+            .setReceiverApplicationId(
+                Prefs.appId(context).ifBlank { CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID }
+            )
             .setCastMediaOptions(media)
             .build()
     }
