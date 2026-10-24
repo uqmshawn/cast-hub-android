@@ -1,0 +1,260 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Cast Hub</title>
+<!-- Google Cast receiver framework (handles video playback + phone messages) -->
+<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<style>
+  /* Written for the 1st-gen Chromecast: old Chrome, 1280x720 UI, weak GPU. ES5 + flexbox only. */
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0e13; color: #e8ecf2;
+    font-family: "Roboto", "Helvetica Neue", Arial, sans-serif; }
+  .layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+  .hidden { display: none !important; }
+
+  /* ---------- home ---------- */
+  #home { background: #0b0e13; background-image: -webkit-linear-gradient(135deg, #0b0e13 0%, #141b26 55%, #1e1410 100%);
+    background-image: linear-gradient(135deg, #0b0e13 0%, #141b26 55%, #1e1410 100%); }
+  #homeInner { position: absolute; left: 7%; right: 7%; top: 9%; bottom: 9%; -webkit-transition: -webkit-transform 2s ease; transition: transform 2s ease; }
+  #brand { font-size: 22px; letter-spacing: 3px; text-transform: uppercase; color: #8b95a5; }
+  #brand b { color: #ff7a45; font-weight: 700; }
+  #clock { font-size: 150px; font-weight: 300; line-height: 1; margin-top: 30px; letter-spacing: -4px; }
+  #clock span { font-size: 48px; letter-spacing: 0; color: #8b95a5; margin-left: 10px; }
+  #date { font-size: 36px; color: #c9d1dc; margin-top: 10px; }
+  #weatherRow { display: -webkit-box; display: -webkit-flex; display: flex; margin-top: 50px; }
+  .wx { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px;
+    padding: 18px 22px; margin-right: 16px; min-width: 120px; }
+  .wx .d { font-size: 18px; color: #8b95a5; text-transform: uppercase; letter-spacing: 1px; }
+  .wx .i { height: 52px; margin: 6px 0; }
+  .wx .t { font-size: 26px; }
+  .wx .t small { color: #8b95a5; font-size: 20px; }
+  .wx.now { min-width: 200px; background: rgba(255,122,69,0.12); border-color: rgba(255,122,69,0.35); }
+  .wx.now .t { font-size: 44px; }
+  #place { font-size: 18px; color: #8b95a5; margin-top: 14px; }
+  #footer { position: absolute; left: 0; right: 0; bottom: 0; font-size: 22px; color: #8b95a5; }
+  #footer b { color: #e8ecf2; font-weight: 500; }
+  #status { position: absolute; right: 0; bottom: 0; font-size: 20px; color: #3ccf8e; }
+
+  /* ---------- message ---------- */
+  #message { background: rgba(8,10,14,0.92); display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center; text-align: center; }
+  #messageText { font-size: 72px; font-weight: 500; max-width: 80%; line-height: 1.2; }
+  #messageFrom { font-size: 26px; color: #ff7a45; margin-bottom: 24px; letter-spacing: 2px; text-transform: uppercase; }
+
+  /* ---------- website ---------- */
+  #web { background: #fff; }
+  #web iframe { width: 100%; height: 100%; border: 0; }
+
+  /* ---------- video ---------- */
+  cast-media-player { --theme-hue: 20; --progress-color: #ff7a45; --splash-image: none; }
+  #player { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+
+<div id="home" class="layer">
+  <div id="homeInner">
+    <div id="brand"><b>Cast</b> Hub · <span id="tvName">Lounge TV</span></div>
+    <div id="clock">--:--</div>
+    <div id="date"></div>
+    <div id="weatherRow"></div>
+    <div id="place"></div>
+    <div id="footer">Open <b>Cast Hub</b> on your phone to play something</div>
+    <div id="status"></div>
+  </div>
+</div>
+
+<div id="web" class="layer hidden"><iframe id="webFrame" src="about:blank"></iframe></div>
+
+<div id="playerWrap" class="layer hidden"><cast-media-player id="player"></cast-media-player></div>
+
+<div id="message" class="layer hidden">
+  <div><div id="messageFrom">Message</div><div id="messageText"></div></div>
+</div>
+
+<script>
+(function () {
+  var NS = 'urn:x-cast:com.shawn.casthub';
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------------- settings (remembered on the Chromecast) ----------------
+  var settings = { place: 'Brisbane', lat: -27.4698, lon: 153.0251, name: 'Lounge TV', h24: false };
+  try { var saved = JSON.parse(localStorage.getItem('casthub') || 'null'); if (saved) for (var k in saved) settings[k] = saved[k]; } catch (e) {}
+  function saveSettings() { try { localStorage.setItem('casthub', JSON.stringify(settings)); } catch (e) {} }
+
+  // ---------------- screens ----------------
+  var mode = 'home';
+  function show(m) {
+    mode = m;
+    $('home').className = 'layer' + (m === 'home' ? '' : ' hidden');
+    $('web').className = 'layer' + (m === 'web' ? '' : ' hidden');
+    $('playerWrap').className = 'layer' + (m === 'video' ? '' : ' hidden');
+    if (m !== 'web') $('webFrame').src = 'about:blank';
+  }
+
+  // ---------------- clock ----------------
+  var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function tick() {
+    var d = new Date(), h = d.getHours(), ampm = '';
+    if (!settings.h24) { ampm = h < 12 ? 'am' : 'pm'; h = h % 12 || 12; }
+    $('clock').innerHTML = h + ':' + pad(d.getMinutes()) + (ampm ? '<span>' + ampm + '</span>' : '');
+    $('date').textContent = DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()];
+  }
+  tick(); setInterval(tick, 1000);
+
+  // Nudge the layout a little every few minutes so nothing burns into the TV.
+  var drift = 0;
+  setInterval(function () {
+    drift = (drift + 1) % 4;
+    var x = [0, 12, 0, -12][drift], y = [0, 8, 14, 6][drift];
+    $('homeInner').style.webkitTransform = 'translate(' + x + 'px,' + y + 'px)';
+    $('homeInner').style.transform = 'translate(' + x + 'px,' + y + 'px)';
+  }, 180000);
+
+  // ---------------- weather (Open-Meteo, no key needed) ----------------
+  function get(url, cb) {
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.timeout = 15000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      if (x.status === 200) { try { cb(JSON.parse(x.responseText)); } catch (e) { cb(null); } } else cb(null);
+    };
+    x.send();
+  }
+  // Drawn icons (the 1st-gen Chromecast has no colour-emoji font).
+  var CLOUD = '<path d="M16 38h30a10 10 0 0 0 0-20 14 14 0 0 0-27-3A11 11 0 0 0 16 38z" fill="#c9d1dc"/>';
+  var ICONS = {
+    sun: '<circle cx="32" cy="32" r="11" fill="#f5b942"/><g stroke="#f5b942" stroke-width="4" stroke-linecap="round">' +
+      '<line x1="32" y1="6" x2="32" y2="13"/><line x1="32" y1="51" x2="32" y2="58"/><line x1="6" y1="32" x2="13" y2="32"/>' +
+      '<line x1="51" y1="32" x2="58" y2="32"/><line x1="14" y1="14" x2="19" y2="19"/><line x1="45" y1="45" x2="50" y2="50"/>' +
+      '<line x1="14" y1="50" x2="19" y2="45"/><line x1="45" y1="19" x2="50" y2="14"/></g>',
+    part: '<circle cx="24" cy="22" r="10" fill="#f5b942"/>' + CLOUD,
+    cloud: CLOUD,
+    fog: '<g stroke="#c9d1dc" stroke-width="5" stroke-linecap="round"><line x1="10" y1="24" x2="54" y2="24"/>' +
+      '<line x1="14" y1="34" x2="50" y2="34"/><line x1="10" y1="44" x2="54" y2="44"/></g>',
+    rain: CLOUD + '<g stroke="#5aa9ff" stroke-width="4" stroke-linecap="round"><line x1="22" y1="44" x2="19" y2="54"/>' +
+      '<line x1="32" y1="44" x2="29" y2="54"/><line x1="42" y1="44" x2="39" y2="54"/></g>',
+    snow: CLOUD + '<g fill="#ffffff"><circle cx="22" cy="49" r="3"/><circle cx="32" cy="53" r="3"/><circle cx="42" cy="49" r="3"/></g>',
+    storm: CLOUD + '<path d="M33 40l-8 12h7l-4 10 12-15h-7l4-7z" fill="#f5b942"/>'
+  };
+  function icon(code) {
+    var k = code === 0 ? 'sun' : code <= 2 ? 'part' : code === 3 ? 'cloud' : code <= 48 ? 'fog' :
+      (code <= 67 || (code >= 80 && code <= 82)) ? 'rain' : (code <= 77 || code === 85 || code === 86) ? 'snow' : 'storm';
+    return '<svg width="52" height="52" viewBox="0 0 64 64">' + ICONS[k] + '</svg>';
+  }
+  function loadWeather() {
+    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + settings.lat + '&longitude=' + settings.lon +
+      '&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4';
+    get(url, function (w) {
+      if (!w || !w.current) return;
+      var html = '<div class="wx now"><div class="d">Now</div><div class="i">' + icon(w.current.weather_code) +
+        '</div><div class="t">' + Math.round(w.current.temperature_2m) + '°</div></div>';
+      for (var i = 1; i < w.daily.time.length; i++) {
+        var day = new Date(w.daily.time[i] + 'T12:00:00');
+        html += '<div class="wx"><div class="d">' + SHORT[day.getDay()] + '</div><div class="i">' + icon(w.daily.weather_code[i]) +
+          '</div><div class="t">' + Math.round(w.daily.temperature_2m_max[i]) + '° <small>' + Math.round(w.daily.temperature_2m_min[i]) + '°</small></div></div>';
+      }
+      $('weatherRow').innerHTML = html;
+      $('place').textContent = settings.place;
+    });
+  }
+  loadWeather(); setInterval(loadWeather, 20 * 60 * 1000);
+
+  function setPlace(name) {
+    get('https://geocoding-api.open-meteo.com/v1/search?count=1&name=' + encodeURIComponent(name), function (r) {
+      var p = r && r.results && r.results[0];
+      if (!p) { showMessage('Couldn\'t find "' + name + '"', 'Weather', 5); return; }
+      settings.place = p.name + (p.admin1 ? ', ' + p.admin1 : '');
+      settings.lat = p.latitude; settings.lon = p.longitude;
+      saveSettings(); loadWeather();
+    });
+  }
+
+  function applyName() { $('tvName').textContent = settings.name; }
+  applyName();
+
+  // ---------------- messages ----------------
+  var msgTimer = null;
+  function showMessage(text, from, seconds) {
+    $('messageText').textContent = text;
+    $('messageFrom').textContent = from || 'Message';
+    $('message').className = 'layer';
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(function () { $('message').className = 'layer hidden'; }, (seconds || 15) * 1000);
+  }
+
+  // ---------------- commands from the phone ----------------
+  var playerManager = null;
+  function handle(cmd) {
+    if (!cmd || !cmd.type) return;
+    if (cmd.type === 'home') {
+      if (playerManager) { try { playerManager.stop(); } catch (e) {} }
+      show('home');
+    } else if (cmd.type === 'message') {
+      showMessage(cmd.text || '', cmd.from, cmd.seconds);
+    } else if (cmd.type === 'web') {
+      if (playerManager) { try { playerManager.stop(); } catch (e) {} }
+      $('webFrame').src = cmd.url;
+      show('web');
+    } else if (cmd.type === 'config') {
+      if (cmd.name) { settings.name = cmd.name; applyName(); }
+      if (typeof cmd.h24 === 'boolean') { settings.h24 = cmd.h24; tick(); }
+      saveSettings();
+      if (cmd.place) setPlace(cmd.place);
+    }
+    if (cmd.type !== 'message') $('message').className = 'layer hidden';
+  }
+
+  // ---------------- Cast framework ----------------
+  if (typeof cast === 'undefined' || !cast.framework) {
+    $('status').textContent = 'Offline mode';
+    return;
+  }
+  var context = cast.framework.CastReceiverContext.getInstance();
+  playerManager = context.getPlayerManager();
+  var E = cast.framework.events.EventType;
+
+  playerManager.addEventListener(E.PLAYER_LOAD_COMPLETE, function () { show('video'); });
+  playerManager.addEventListener(E.MEDIA_FINISHED, function () { show('home'); });
+  playerManager.addEventListener(E.ERROR, function () {
+    show('home');
+    showMessage('That video couldn\'t play on this Chromecast. Try "Convert & play" in the app.', 'Playback error', 10);
+  });
+  // Video is loading: switch to the player so its spinner shows.
+  playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, function (req) {
+    $('message').className = 'layer hidden';
+    show('video');
+    return req;
+  });
+  playerManager.setMessageInterceptor(cast.framework.messages.MessageType.STOP, function (req) {
+    setTimeout(function () { show('home'); }, 300);
+    return req;
+  });
+
+  context.addCustomMessageListener(NS, function (event) {
+    var data = event.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+    handle(data);
+  });
+  context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, function () {
+    $('status').textContent = '● Phone connected';
+  });
+  context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function () {
+    if (context.getSenders().length === 0) $('status').textContent = '';
+  });
+
+  var options = new cast.framework.CastReceiverOptions();
+  options.disableIdleTimeout = true;       // keep the home screen up after the phone disconnects
+  options.maxInactivity = 3600;
+  options.customNamespaces = {};
+  options.customNamespaces[NS] = cast.framework.system.MessageType.JSON;
+  context.start(options);
+})();
+</script>
+</body>
+</html>
