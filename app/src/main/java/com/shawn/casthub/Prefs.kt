@@ -19,6 +19,13 @@ object Prefs {
     fun allResume(ctx: Context): Map<Long, Long> =
         r(ctx).all.mapNotNull { (k, v) -> k.toLongOrNull()?.let { id -> (v as? Long)?.let { id to it } } }.toMap()
 
+    // ---- conversions that haven't finished yet (resumed on next launch) ----
+    private fun q(ctx: Context) = ctx.getSharedPreferences("pending", Context.MODE_PRIVATE)
+    fun addPending(ctx: Context, id: Long) = q(ctx).edit().putLong(id.toString(), System.currentTimeMillis()).apply()
+    fun removePending(ctx: Context, id: Long) = q(ctx).edit().remove(id.toString()).apply()
+    fun pending(ctx: Context): List<Long> =
+        q(ctx).all.entries.sortedBy { (it.value as? Long) ?: 0L }.mapNotNull { it.key.toLongOrNull() }
+
     fun get(ctx: Context, key: String, def: String = ""): String = p(ctx).getString(key, def) ?: def
     fun put(ctx: Context, key: String, value: String) = p(ctx).edit().putString(key, value).apply()
 }

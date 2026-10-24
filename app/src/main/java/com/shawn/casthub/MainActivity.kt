@@ -82,7 +82,7 @@ class MainActivity : AppCompatActivity() {
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) = connected(session)
         override fun onSessionEnded(session: CastSession, error: Int) {
             detachTv()
-            StreamService.stop(this@MainActivity)
+            if (!converter.isBusy) StreamService.stop(this@MainActivity)
         }
 
         override fun onSessionStarting(session: CastSession) {}
@@ -234,6 +234,7 @@ class MainActivity : AppCompatActivity() {
                 allVideos = list
                 applyFilter()
                 sendLibrary()
+                resumePending()
             }
         }
     }
@@ -345,16 +346,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun convertThenPlay(v: Video, r: CompatResult, fromTv: Boolean) {
+    private fun convertThenPlay(v: Video, r: CompatResult, fromTv: Boolean, play: Boolean = true) {
         if (converter.isBusy) {
             val msg = "Another video is converting — wait for it to finish"
-            if (fromTv) tvStatus(msg) else toast(msg)
+            if (fromTv) tvStatus(msg) else if (play) toast(msg)
             return
         }
+        Prefs.addPending(this, v.id)
+        StreamService.start(this) // keeps converting even if you switch apps or turn the screen off
         progress[v.id] = 0
         adapter.refresh(v.id)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (fromTv) tvStatus("Converting \"${v.title}\" on your phone…", 6) else toast("Converting… keep Cast Hub open")
+        if (fromTv) tvStatus("Converting \"${v.title}\" on your phone…", 6)
+        else if (play) toast("Converting… you can switch apps, it keeps going")
         var lastReported = 0
         val out = Converted.file(this, v.id)
         val tmp = java.io.File(out.parentFile, "${v.id}.part.mp4")
@@ -370,19 +373,58 @@ class MainActivity : AppCompatActivity() {
             },
             onDone = { converted, err ->
                 val ok = converted && tmp.renameTo(out)
+                Prefs.removePending(this, v.id)
                 progress.remove(v.id)
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 adapter.refresh(v.id)
                 if (ok) {
-                    if (!fromTv) toast("Converted — sending to the TV")
-                    castVideo(v, openControls = !fromTv)
+                    if (play) {
+                        if (!fromTv) toast("Converted — sending to the TV")
+                        castVideo(v, openControls = !fromTv)
+                    } else {
+                        toast("Finished converting \"${v.title}\"")
+                    }
                     sendLibrary()
                 } else {
                     val msg = "Conversion failed: $err"
                     if (fromTv) tvStatus(msg, 8) else toast(msg)
                 }
+                conversionFinished()
             },
         )
+    }
+
+    /** Stops the background service once nothing is converting or playing, then resumes any queued conversions. */
+    private fun conversionFinished() {
+        val s = castContext.sessionManager.currentCastSession
+        if (s == null || !s.isConnected) StreamService.stop(this)
+        resumePending()
+    }
+
+    /** Conversions that were interrupted (app closed, phone restarted) carry on, one at a time. */
+    private fun resumePending() {
+        if (converter.isBusy || allVideos.isEmpty()) return
+        val pending = Prefs.pending(this)
+        for (id in pending) {
+            val v = allVideos.find { it.id == id }
+            if (v == null || Converted.exists(this, id)) {
+                Prefs.removePending(this, id)
+                continue
+            }
+            bg.execute {
+                val r = compat[id]?.takeIf { it.compat != Compat.CHECKING } ?: Videos.check(this, v)
+                runOnUiThread {
+                    compat[id] = r
+                    if (r.compat == Compat.READY) {
+                        Prefs.removePending(this, id)
+                        resumePending()
+                    } else if (!converter.isBusy) {
+                        toast("Resuming conversion of \"${v.title}\"")
+                        convertThenPlay(v, r, fromTv = false, play = false)
+                    }
+                }
+            }
+            return
+        }
     }
 
     /** Converts and plays at the same time: the TV starts after a short buffer while the phone keeps converting. */
@@ -395,9 +437,10 @@ class MainActivity : AppCompatActivity() {
         if (connectedSession { playLive(v, r, fromTv) } == null) return
         val live = Converted.liveFile(this, v.id)
         LiveConvert.start(v.id, live)
+        Prefs.addPending(this, v.id) // if the app is closed before 100%, it finishes converting next time
+        StreamService.start(this)
         progress[v.id] = 0
         adapter.refresh(v.id)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (fromTv) tvStatus("Getting \"${v.title}\" ready…", 6) else toast("Starting — the TV will begin in a few seconds")
 
         var started = false
@@ -410,12 +453,13 @@ class MainActivity : AppCompatActivity() {
             onDone = { ok, err ->
                 LiveConvert.finish(ok)
                 progress.remove(v.id)
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 adapter.refresh(v.id)
                 if (!ok) {
                     val msg = "Conversion failed: $err"
                     if (fromTv) tvStatus(msg, 8) else toast(msg)
                     LiveConvert.clear()
+                    Prefs.removePending(this, v.id)
+                    conversionFinished()
                     return@convert
                 }
                 if (!started) {
@@ -427,9 +471,11 @@ class MainActivity : AppCompatActivity() {
                     if (saved) {
                         LiveConvert.clear()
                         live.delete() // the TV keeps reading through its open handle
+                        Prefs.removePending(this, v.id)
                         adapter.refresh(v.id)
                         sendLibrary()
                     }
+                    conversionFinished()
                 }
             },
         )
