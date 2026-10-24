@@ -23,6 +23,24 @@ enum class Compat { CHECKING, READY, MAYBE_NOT }
 
 data class CompatResult(val compat: Compat, val note: String, val width: Int = 0, val height: Int = 0)
 
+object Photos {
+    /** Newest photos on the phone (ids only), for the TV's Photos row and slideshow. */
+    fun load(ctx: Context, limit: Int = 60): List<Long> {
+        val out = mutableListOf<Long>()
+        try {
+            ctx.contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID), null, null,
+                "${MediaStore.Images.Media.DATE_ADDED} DESC"
+            )?.use { c ->
+                val i = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                while (c.moveToNext() && out.size < limit) out += c.getLong(i)
+            }
+        } catch (_: Exception) {
+        }
+        return out
+    }
+}
+
 object Videos {
 
     /** Every video on the phone (camera, Downloads, Movies, WhatsApp…), newest first. */

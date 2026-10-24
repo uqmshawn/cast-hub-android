@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
@@ -12,6 +13,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,9 +30,13 @@ import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
@@ -39,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: VideoAdapter
     private lateinit var emptyView: TextView
     private lateinit var search: EditText
+    private lateinit var remoteStatus: TextView
 
     private var allVideos: List<Video> = emptyList()
     private val compat = HashMap<Long, CompatResult>()
@@ -46,9 +53,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var converter: Converter
     private val bg = Executors.newFixedThreadPool(2)
 
-    /** Something the user asked to play before a TV was connected; played once they pick one. */
+    /** Something the user asked for before a TV was connected; done once they pick one. */
     private var pending: (() -> Unit)? = null
     private var subtitlesFor: Long = -1
+    private var attached: CastSession? = null
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { loadVideos() }
@@ -66,18 +74,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    /** Remembers where you stopped in each video ("Continue watching"). */
+    private val progressListener = RemoteMediaClient.ProgressListener { pos, dur -> saveProgress(pos, dur) }
+
     private val sessionListener = object : SessionManagerListener<CastSession> {
-        override fun onSessionStarted(session: CastSession, sessionId: String) {
-            pending?.invoke()
-            pending = null
-        }
-
-        override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
-            pending?.invoke()
-            pending = null
-        }
-
+        override fun onSessionStarted(session: CastSession, sessionId: String) = connected(session)
+        override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) = connected(session)
         override fun onSessionEnded(session: CastSession, error: Int) {
+            detachTv()
             StreamService.stop(this@MainActivity)
         }
 
@@ -91,6 +95,12 @@ class MainActivity : AppCompatActivity() {
         override fun onSessionSuspended(session: CastSession, reason: Int) {}
     }
 
+    private fun connected(session: CastSession) {
+        attachTv(session)
+        pending?.invoke()
+        pending = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -102,6 +112,7 @@ class MainActivity : AppCompatActivity() {
 
         emptyView = findViewById(R.id.empty)
         search = findViewById(R.id.search)
+        remoteStatus = findViewById(R.id.remoteStatus)
 
         adapter = VideoAdapter(
             context = this,
@@ -111,6 +122,7 @@ class MainActivity : AppCompatActivity() {
             hasSubtitles = { v -> Subtitles.get(this, v.id) != null },
             progressOf = { v -> progress[v.id] },
             isConverted = { v -> Converted.exists(this, v.id) },
+            resumeOf = { v -> Prefs.resume(this, v.id) },
             onPlay = { v -> playVideo(v) },
             onSubtitles = { v -> subtitlesClicked(v) },
         )
@@ -121,6 +133,13 @@ class MainActivity : AppCompatActivity() {
 
         search.doAfterTextChanged { applyFilter() }
         findViewById<MaterialButton>(R.id.btnLink).setOnClickListener { showLinkDialog(null) }
+
+        findViewById<BottomNavigationView>(R.id.bottomNav).setOnItemSelectedListener { item ->
+            showPanel(item.itemId)
+            true
+        }
+        setUpRemote()
+        buildTvPanel()
 
         requestPermissionsAndLoad()
         handleShare(intent)
@@ -134,11 +153,19 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         castContext.sessionManager.addSessionManagerListener(sessionListener, CastSession::class.java)
+        castContext.sessionManager.currentCastSession?.let { if (it.isConnected && attached == null) attachTv(it) }
+        if (::adapter.isInitialized) adapter.notifyDataSetChanged() // refresh resume positions
+        updateRemoteStatus()
     }
 
     override fun onPause() {
         castContext.sessionManager.removeSessionManagerListener(sessionListener, CastSession::class.java)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) converter.cancel()
+        super.onDestroy()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -150,10 +177,6 @@ class MainActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == R.id.action_refresh) {
             loadVideos()
-            return true
-        }
-        if (item.itemId == R.id.action_tv) {
-            showTvMenu()
             return true
         }
         if (item.itemId == R.id.action_clear) {
@@ -169,19 +192,34 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    // ---------------- videos ----------------
-
-    private fun videoPermissions(): Array<String> =
-        if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.POST_NOTIFICATIONS)
-        else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-
-    private fun hasVideoPermission(): Boolean {
-        val p = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
-        return ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+    private fun showPanel(navId: Int) {
+        findViewById<View>(R.id.panelVideos).visibility = if (navId == R.id.nav_videos) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.panelRemote).visibility = if (navId == R.id.nav_remote) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.panelTv).visibility = if (navId == R.id.nav_tv) View.VISIBLE else View.GONE
+        if (navId == R.id.nav_tv) buildTvPanel()
+        if (navId == R.id.nav_remote) updateRemoteStatus()
     }
 
+    // ---------------- videos ----------------
+
+    private fun mediaPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= 33) arrayOf(
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
+        else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+
+    private fun granted(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasVideoPermission(): Boolean =
+        granted(if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE)
+
+    private fun hasPhotoPermission(): Boolean =
+        granted(if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE)
+
     private fun requestPermissionsAndLoad() {
-        if (hasVideoPermission()) loadVideos() else permissionLauncher.launch(videoPermissions())
+        if (hasVideoPermission() && hasPhotoPermission()) loadVideos() else permissionLauncher.launch(mediaPermissions())
     }
 
     private fun loadVideos() {
@@ -194,6 +232,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 allVideos = list
                 applyFilter()
+                sendLibrary()
             }
         }
     }
@@ -252,6 +291,20 @@ class MainActivity : AppCompatActivity() {
         pickSubtitles.launch(arrayOf("*/*"))
     }
 
+    private fun formatTime(seconds: Long): String {
+        val h = seconds / 3600
+        val m = (seconds / 60) % 60
+        val s = seconds % 60
+        return if (h > 0) "$h:${"%02d".format(m)}:${"%02d".format(s)}" else "$m:${"%02d".format(s)}"
+    }
+
+    private fun metaText(v: Video): String {
+        val bits = mutableListOf<String>()
+        if (v.durationMs > 0) bits += formatTime(v.durationMs / 1000)
+        bits += if (v.size >= 1_000_000_000) String.format("%.1f GB", v.size / 1e9) else "${v.size / 1_000_000} MB"
+        return bits.joinToString(" · ")
+    }
+
     // ---------------- casting ----------------
 
     private fun connectedSession(retry: () -> Unit): CastSession? {
@@ -279,7 +332,7 @@ class MainActivity : AppCompatActivity() {
                     "${r.note}.\n\nYour 1st-gen Chromecast can't play this format. Cast Hub will make a " +
                         "compatible copy on this phone (usually quicker than the video's length), then play it on the TV."
                 )
-                .setPositiveButton("Convert & play") { _, _ -> convertThenPlay(v, r) }
+                .setPositiveButton("Convert & play") { _, _ -> convertThenPlay(v, r, fromTv = false) }
                 .setNeutralButton("Try anyway") { _, _ -> castVideo(v) }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -288,42 +341,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun convertThenPlay(v: Video, r: CompatResult) {
+    private fun convertThenPlay(v: Video, r: CompatResult, fromTv: Boolean) {
         if (converter.isBusy) {
-            toast("Another video is converting — wait for it to finish")
+            val msg = "Another video is converting — wait for it to finish"
+            if (fromTv) tvStatus(msg) else toast(msg)
             return
         }
         progress[v.id] = 0
         adapter.refresh(v.id)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        toast("Converting… keep Cast Hub open")
+        if (fromTv) tvStatus("Converting \"${v.title}\" on your phone…", 6) else toast("Converting… keep Cast Hub open")
+        var lastReported = 0
         converter.convert(
             v, r.width, r.height,
             onProgress = { p ->
                 progress[v.id] = p
                 adapter.refresh(v.id)
+                if (fromTv && p - lastReported >= 20) {
+                    lastReported = p
+                    tvStatus("Converting… $p%", 5)
+                }
             },
             onDone = { ok, err ->
                 progress.remove(v.id)
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 adapter.refresh(v.id)
                 if (ok) {
-                    toast("Converted — sending to the TV")
-                    castVideo(v)
+                    if (!fromTv) toast("Converted — sending to the TV")
+                    castVideo(v, openControls = !fromTv)
+                    sendLibrary()
                 } else {
-                    toast("Conversion failed: $err")
+                    val msg = "Conversion failed: $err"
+                    if (fromTv) tvStatus(msg, 8) else toast(msg)
                 }
             },
         )
     }
 
-    override fun onDestroy() {
-        if (isFinishing) converter.cancel()
-        super.onDestroy()
-    }
-
-    private fun castVideo(v: Video) {
-        val session = connectedSession { castVideo(v) } ?: return
+    private fun castVideo(v: Video, openControls: Boolean = true) {
+        val session = connectedSession { castVideo(v, openControls) } ?: return
         val ip = Net.localIp()
         if (ip == null) {
             toast("Connect your phone to the same Wi-Fi as the TV")
@@ -362,7 +418,13 @@ class MainActivity : AppCompatActivity() {
             .setMediaInfo(builder.build())
             .setAutoplay(true)
         if (hasSubs) request.setActiveTrackIds(longArrayOf(1))
-        load(session, request.build())
+
+        val resume = Prefs.resume(this, v.id)
+        if (resume > 0) {
+            request.setCurrentTime(resume * 1000)
+            toast("Resuming from ${formatTime(resume)}")
+        }
+        load(session, request.build(), openControls)
     }
 
     private fun castLink(url: String, title: String, live: Boolean) {
@@ -383,73 +445,274 @@ class MainActivity : AppCompatActivity() {
             .setContentType(type)
             .setMetadata(meta)
             .build()
-        load(session, MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
+        load(session, MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build(), true)
     }
 
-    private fun load(session: CastSession, request: MediaLoadRequestData) {
+    private fun load(session: CastSession, request: MediaLoadRequestData, openControls: Boolean) {
         val client = session.remoteMediaClient ?: run {
             toast("TV not ready yet, try again")
             return
         }
         client.load(request).setResultCallback { result ->
             if (result.status.isSuccess) {
-                startActivity(Intent(this, ExpandedControlsActivity::class.java))
+                if (openControls) startActivity(Intent(this, ExpandedControlsActivity::class.java))
             } else {
                 toast("The TV couldn't play this (code ${result.status.statusCode})")
             }
         }
     }
 
-    // ---------------- TV home screen (custom receiver) ----------------
+    private fun saveProgress(posMs: Long, durMs: Long) {
+        val contentId = attached?.remoteMediaClient?.mediaInfo?.contentId ?: return
+        val id = Regex("/v/[^/]+/(\\d+)").find(contentId)?.groupValues?.get(1)?.toLongOrNull() ?: return
+        if (durMs <= 0) return
+        when {
+            posMs >= durMs - 90_000 -> Prefs.setResume(this, id, 0)   // finished (or nearly)
+            posMs > 30_000 -> Prefs.setResume(this, id, posMs / 1000)
+        }
+    }
 
-    private fun showTvMenu() {
-        if (Prefs.appId(this).isBlank()) {
-            askAppId()
+    // ---------------- TV home screen: two-way link ----------------
+
+    private fun hasTvScreen() = Prefs.appId(this).isNotBlank()
+
+    private fun attachTv(session: CastSession) {
+        if (attached === session) return
+        detachTv()
+        attached = session
+        session.remoteMediaClient?.addProgressListener(progressListener, 5000)
+        if (hasTvScreen()) {
+            try {
+                session.setMessageReceivedCallbacks(TV_NAMESPACE) { _, _, message ->
+                    runOnUiThread { onTvMessage(message) }
+                }
+            } catch (_: Exception) {
+            }
+            sendLibrary()
+        }
+        updateRemoteStatus()
+    }
+
+    private fun detachTv() {
+        attached?.remoteMediaClient?.removeProgressListener(progressListener)
+        attached = null
+        updateRemoteStatus()
+    }
+
+    private fun onTvMessage(message: String) {
+        val j = try { JSONObject(message) } catch (e: Exception) { return }
+        when (j.optString("type")) {
+            "hello" -> sendLibrary()
+            "play" -> playFromTv(j.optLong("id", -1))
+        }
+    }
+
+    /** A video was chosen with the remote on the TV. */
+    private fun playFromTv(id: Long) {
+        val v = allVideos.find { it.id == id } ?: run {
+            tvStatus("That video isn't on the phone any more")
             return
         }
-        val items = arrayOf(
-            "Show home screen on TV",
-            "Send a message to the TV",
-            "Show a website on the TV",
-            "Weather location",
-            "TV name",
-            "Clock: 12 / 24 hour",
-            "Receiver App ID",
-        )
-        MaterialAlertDialogBuilder(this)
-            .setTitle("TV home screen")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> sendTv(org.json.JSONObject().put("type", "home"))
-                    1 -> askText("Message for the TV", "e.g. Dinner's ready!", "") { text ->
-                        sendTv(org.json.JSONObject().put("type", "message").put("text", text).put("seconds", 20))
-                    }
-                    2 -> askText("Show a website", "https://…", "https://") { url ->
-                        sendTv(org.json.JSONObject().put("type", "web").put("url", url))
-                    }
-                    3 -> askText("Weather location", "Suburb or city", Prefs.get(this, "place", "Brisbane")) { place ->
-                        Prefs.put(this, "place", place)
-                        sendTv(org.json.JSONObject().put("type", "config").put("place", place))
-                    }
-                    4 -> askText("TV name", "Shown on the home screen", Prefs.get(this, "tvName", "Lounge TV")) { name ->
-                        Prefs.put(this, "tvName", name)
-                        sendTv(org.json.JSONObject().put("type", "config").put("name", name))
-                    }
-                    5 -> {
-                        val h24 = Prefs.get(this, "h24", "false") != "true"
-                        Prefs.put(this, "h24", h24.toString())
-                        sendTv(org.json.JSONObject().put("type", "config").put("h24", h24))
-                    }
-                    6 -> askAppId()
+        if (progress.containsKey(id)) {
+            tvStatus("Still converting — it'll play when it's done")
+            return
+        }
+        if (Converted.exists(this, id)) {
+            castVideo(v, openControls = false)
+            return
+        }
+        val r = compat[id]
+        if (r == null || r.compat == Compat.CHECKING) {
+            bg.execute {
+                val res = Videos.check(this, v)
+                runOnUiThread {
+                    compat[id] = res
+                    adapter.refresh(id)
+                    playFromTv(id)
                 }
             }
-            .show()
+            return
+        }
+        if (r.compat == Compat.MAYBE_NOT) convertThenPlay(v, r, fromTv = true) else castVideo(v, openControls = false)
+    }
+
+    /** Sends the video list, photo list and resume positions to the TV home screen. */
+    private fun sendLibrary() {
+        val session = castContext.sessionManager.currentCastSession ?: return
+        if (!session.isConnected || !hasTvScreen()) return
+        val ip = Net.localIp() ?: return
+        val port = try { ServerHolder.ensure(applicationContext) } catch (e: Exception) { return }
+        StreamService.start(this)
+
+        val videos = allVideos.take(40)
+        val compatSnap = HashMap(compat)
+        val photosAllowed = hasPhotoPermission()
+        bg.execute {
+            val photos = if (photosAllowed) Photos.load(this, 60) else emptyList()
+            val resume = Prefs.allResume(this)
+            val arr = JSONArray()
+            for (v in videos) {
+                val needs = compatSnap[v.id]?.compat == Compat.MAYBE_NOT && !Converted.exists(this, v.id)
+                arr.put(
+                    JSONObject().put("id", v.id).put("t", v.title).put("m", metaText(v))
+                        .put("d", v.durationMs / 1000).put("c", if (needs) 1 else 0)
+                )
+            }
+            val res = JSONObject()
+            for ((vid, s) in resume) if (videos.any { it.id == vid }) res.put(vid.toString(), s)
+            val msg = JSONObject().put("type", "library")
+                .put("base", "http://$ip:$port").put("token", ServerHolder.token)
+                .put("videos", arr).put("photos", JSONArray(photos)).put("resume", res)
+            runOnUiThread { sendTvQuiet(msg) }
+        }
+    }
+
+    private fun tvStatus(text: String, seconds: Int = 4) =
+        sendTvQuiet(JSONObject().put("type", "status").put("text", text).put("seconds", seconds))
+
+    private fun sendTvQuiet(json: JSONObject) {
+        val s = castContext.sessionManager.currentCastSession ?: return
+        if (!s.isConnected || !hasTvScreen()) return
+        try {
+            s.sendMessage(TV_NAMESPACE, json.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun sendTv(json: JSONObject) {
+        if (!hasTvScreen()) {
+            toast("Set up the TV home screen first (TV tab → TV screen App ID)")
+            return
+        }
+        val session = connectedSession { sendTv(json) } ?: return
+        try {
+            session.sendMessage(TV_NAMESPACE, json.toString()).setResultCallback { status ->
+                if (!status.isSuccess) toast("The TV didn't respond — is the Cast Hub home screen showing?")
+            }
+        } catch (e: Exception) {
+            toast("Couldn't reach the TV: ${e.message}")
+        }
+    }
+
+    // ---------------- Remote tab ----------------
+
+    private fun setUpRemote() {
+        fun bind(id: Int, key: String) = findViewById<View>(id).setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            sendTv(JSONObject().put("type", "key").put("key", key))
+        }
+        bind(R.id.kUp, "up")
+        bind(R.id.kDown, "down")
+        bind(R.id.kLeft, "left")
+        bind(R.id.kRight, "right")
+        bind(R.id.kOk, "ok")
+        bind(R.id.kBack, "back")
+        bind(R.id.kHome, "home")
+
+        findViewById<View>(R.id.kPlay).setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            val client = castContext.sessionManager.currentCastSession?.remoteMediaClient
+            if (client != null && client.hasMediaSession()) client.togglePlayback()
+            else sendTv(JSONObject().put("type", "key").put("key", "ok"))
+        }
+        findViewById<View>(R.id.kVolUp).setOnClickListener { changeVolume(0.05) }
+        findViewById<View>(R.id.kVolDown).setOnClickListener { changeVolume(-0.05) }
+    }
+
+    private fun changeVolume(delta: Double) {
+        val s = connectedSession { changeVolume(delta) } ?: return
+        try {
+            s.volume = (s.volume + delta).coerceIn(0.0, 1.0)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun updateRemoteStatus() {
+        if (!::remoteStatus.isInitialized) return
+        val s = castContext.sessionManager.currentCastSession
+        remoteStatus.text = when {
+            !hasTvScreen() -> "Set up the TV home screen in the TV tab to use ▲▼◀▶ / OK.\nPlay/pause and volume work already."
+            s != null && s.isConnected -> "Connected to ${s.castDevice?.friendlyName ?: "your TV"}"
+            else -> "Tap the cast icon at the top to connect to your TV"
+        }
+    }
+
+    // ---------------- TV tab ----------------
+
+    private fun buildTvPanel() {
+        val box = findViewById<LinearLayout>(R.id.tvActions)
+        box.removeAllViews()
+        fun action(title: String, sub: String, onClick: () -> Unit) {
+            val v = LayoutInflater.from(this).inflate(R.layout.item_action, box, false)
+            v.findViewById<TextView>(R.id.actionTitle).text = title
+            v.findViewById<TextView>(R.id.actionSub).text = sub
+            v.setOnClickListener { onClick() }
+            box.addView(v)
+        }
+        fun section(title: String) {
+            box.addView(TextView(this).apply {
+                text = title
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted))
+                textSize = 13f
+                val pad = (8 * resources.displayMetrics.density).toInt()
+                setPadding(pad / 2, pad * 2, 0, pad / 2)
+            })
+        }
+
+        val appId = Prefs.appId(this)
+        if (appId.isBlank()) {
+            section("SET UP")
+            action("TV screen App ID", "Not set — using Google's standard player. Tap to enter your App ID.") { askAppId() }
+            return
+        }
+        section("ON THE TV")
+        action("Home screen", "Clock, weather and your videos & photos") { sendTv(JSONObject().put("type", "home")) }
+        action("Photo slideshow", "Your latest photos, full screen") { sendTv(JSONObject().put("type", "slideshow")) }
+        action("Clock screensaver", "Big clock, nothing else") { sendTv(JSONObject().put("type", "screensaver")) }
+        action("Send a message", "Pops up full screen on the TV") {
+            askText("Message for the TV", "e.g. Dinner's ready!", "") { text ->
+                sendTv(JSONObject().put("type", "message").put("text", text).put("seconds", 20))
+            }
+        }
+        action("Show a website", "Simple pages only — many sites block this") {
+            askText("Show a website", "https://…", "https://") { url ->
+                sendTv(JSONObject().put("type", "web").put("url", url))
+            }
+        }
+        action("Refresh videos & photos on TV", "Send the latest list to the home screen") {
+            if (connectedSession { sendLibrary() } != null) {
+                sendLibrary()
+                toast("Sent to the TV")
+            }
+        }
+        section("SETTINGS")
+        action("Weather location", Prefs.get(this, "place", "Brisbane")) {
+            askText("Weather location", "Suburb or city", Prefs.get(this, "place", "Brisbane")) { place ->
+                Prefs.put(this, "place", place)
+                sendTv(JSONObject().put("type", "config").put("place", place))
+                buildTvPanel()
+            }
+        }
+        action("TV name", Prefs.get(this, "tvName", "Lounge TV")) {
+            askText("TV name", "Shown on the home screen", Prefs.get(this, "tvName", "Lounge TV")) { name ->
+                Prefs.put(this, "tvName", name)
+                sendTv(JSONObject().put("type", "config").put("name", name))
+                buildTvPanel()
+            }
+        }
+        val h24 = Prefs.get(this, "h24", "false") == "true"
+        action("Clock style", if (h24) "24-hour — tap for 12-hour" else "12-hour — tap for 24-hour") {
+            Prefs.put(this, "h24", (!h24).toString())
+            sendTv(JSONObject().put("type", "config").put("h24", !h24))
+            buildTvPanel()
+        }
+        action("TV screen App ID", "$appId — tap to change or clear") { askAppId() }
     }
 
     private fun askAppId() {
         askText(
-            "Receiver App ID",
-            "8-character ID from the Cast Developer Console (blank = standard player)",
+            "TV screen App ID",
+            "8 characters from the Cast Developer Console (leave empty for the standard player)",
             Prefs.appId(this),
         ) { id ->
             Prefs.setAppId(this, id)
@@ -462,17 +725,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 .setCancelable(false)
                 .show()
-        }
-    }
-
-    private fun sendTv(json: org.json.JSONObject) {
-        val session = connectedSession { sendTv(json) } ?: return
-        try {
-            session.sendMessage(TV_NAMESPACE, json.toString()).setResultCallback { status ->
-                if (!status.isSuccess) toast("The TV didn't respond — is the Cast Hub home screen running?")
-            }
-        } catch (e: Exception) {
-            toast("Couldn't reach the TV: ${e.message}")
         }
     }
 

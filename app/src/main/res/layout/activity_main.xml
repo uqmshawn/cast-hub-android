@@ -16,63 +16,248 @@
         app:title="Cast Hub"
         app:titleTextColor="@color/text" />
 
-    <EditText
-        android:id="@+id/search"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginBottom="8dp"
-        android:background="@drawable/bg_field"
-        android:drawableStart="@drawable/ic_search"
-        android:drawablePadding="10dp"
-        android:hint="Search your videos"
-        android:importantForAutofill="no"
-        android:inputType="text"
-        android:paddingHorizontal="14dp"
-        android:textColor="@color/text"
-        android:textColorHint="@color/muted" />
-
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/list"
+        <!-- ================= Videos ================= -->
+        <LinearLayout
+            android:id="@+id/panelVideos"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingHorizontal="12dp"
-            android:paddingBottom="8dp" />
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/empty"
+            <EditText
+                android:id="@+id/search"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginBottom="8dp"
+                android:background="@drawable/bg_field"
+                android:drawableStart="@drawable/ic_search"
+                android:drawablePadding="10dp"
+                android:hint="Search your videos"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:paddingHorizontal="14dp"
+                android:textColor="@color/text"
+                android:textColorHint="@color/muted" />
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:clipToPadding="false"
+                    android:paddingHorizontal="12dp"
+                    android:paddingBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="32dp"
+                    android:textColor="@color/muted"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnLink"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginVertical="6dp"
+                android:text="Cast a web link"
+                android:textAllCaps="false"
+                android:textColor="@color/text"
+                app:icon="@drawable/ic_link"
+                app:iconTint="@color/text"
+                app:strokeColor="@color/line" />
+        </LinearLayout>
+
+        <!-- ================= Remote ================= -->
+        <LinearLayout
+            android:id="@+id/panelRemote"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:gravity="center"
-            android:padding="32dp"
-            android:textColor="@color/muted"
-            android:textSize="15sp"
-            android:visibility="gone" />
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingHorizontal="24dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/remoteStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:textColor="@color/muted"
+                android:textSize="14sp" />
+
+            <FrameLayout
+                android:layout_width="270dp"
+                android:layout_height="270dp"
+                android:layout_marginTop="24dp"
+                android:background="@drawable/bg_dpad">
+
+                <ImageButton
+                    android:id="@+id/kUp"
+                    android:layout_width="80dp"
+                    android:layout_height="80dp"
+                    android:layout_gravity="top|center_horizontal"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Up"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text" />
+
+                <ImageButton
+                    android:id="@+id/kDown"
+                    android:layout_width="80dp"
+                    android:layout_height="80dp"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Down"
+                    android:rotation="180"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text" />
+
+                <ImageButton
+                    android:id="@+id/kLeft"
+                    android:layout_width="80dp"
+                    android:layout_height="80dp"
+                    android:layout_gravity="start|center_vertical"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Left"
+                    android:rotation="270"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text" />
+
+                <ImageButton
+                    android:id="@+id/kRight"
+                    android:layout_width="80dp"
+                    android:layout_height="80dp"
+                    android:layout_gravity="end|center_vertical"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Right"
+                    android:rotation="90"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text" />
+
+                <TextView
+                    android:id="@+id/kOk"
+                    android:layout_width="104dp"
+                    android:layout_height="104dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_ok"
+                    android:gravity="center"
+                    android:text="OK"
+                    android:textColor="@color/on_accent"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/kBack"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:background="@drawable/bg_round_btn"
+                    android:contentDescription="Back"
+                    android:src="@drawable/ic_back"
+                    android:tint="@color/text" />
+
+                <ImageButton
+                    android:id="@+id/kHome"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:background="@drawable/bg_round_btn"
+                    android:contentDescription="Home"
+                    android:src="@drawable/ic_home"
+                    android:tint="@color/text" />
+
+                <ImageButton
+                    android:id="@+id/kPlay"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:background="@drawable/bg_round_btn"
+                    android:contentDescription="Play / pause"
+                    android:src="@drawable/ic_play_pause"
+                    android:tint="@color/text" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/kVolDown"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:background="@drawable/bg_round_btn"
+                    android:contentDescription="Volume down"
+                    android:src="@drawable/ic_vol_down"
+                    android:tint="@color/text" />
+
+                <ImageButton
+                    android:id="@+id/kVolUp"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:background="@drawable/bg_round_btn"
+                    android:contentDescription="Volume up"
+                    android:src="@drawable/ic_vol_up"
+                    android:tint="@color/text" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ================= TV ================= -->
+        <ScrollView
+            android:id="@+id/panelTv"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/tvActions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingBottom="16dp" />
+        </ScrollView>
     </FrameLayout>
-
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnLink"
-        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginVertical="6dp"
-        android:text="Cast a web link"
-        android:textAllCaps="false"
-        android:textColor="@color/text"
-        app:icon="@drawable/ic_link"
-        app:iconTint="@color/text"
-        app:strokeColor="@color/line" />
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/miniController"
         android:name="com.google.android.gms.cast.framework.media.widget.MiniControllerFragment"
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
+
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/panel"
+        app:itemIconTint="@color/nav_tint"
+        app:itemTextColor="@color/nav_tint"
+        app:menu="@menu/bottom_nav" />
 </LinearLayout>

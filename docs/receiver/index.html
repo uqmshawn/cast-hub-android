@@ -3,50 +3,78 @@
 <head>
 <meta charset="utf-8">
 <title>Cast Hub</title>
-<!-- Google Cast receiver framework (handles video playback + phone messages) -->
+<!-- Google Cast receiver framework (video playback + messages from the phone / PC remote) -->
 <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 <style>
-  /* Written for the 1st-gen Chromecast: old Chrome, 1280x720 UI, weak GPU. ES5 + flexbox only. */
+  /* Built for the 1st-gen Chromecast: old Chrome, 1280x720 UI, weak GPU. ES5 + flexbox only. */
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0e13; color: #e8ecf2;
     font-family: "Roboto", "Helvetica Neue", Arial, sans-serif; }
   .layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
   .hidden { display: none !important; }
+  .flex { display: -webkit-box; display: -webkit-flex; display: flex; }
 
   /* ---------- home ---------- */
-  #home { background: #0b0e13; background-image: -webkit-linear-gradient(135deg, #0b0e13 0%, #141b26 55%, #1e1410 100%);
-    background-image: linear-gradient(135deg, #0b0e13 0%, #141b26 55%, #1e1410 100%); }
-  #homeInner { position: absolute; left: 7%; right: 7%; top: 9%; bottom: 9%; -webkit-transition: -webkit-transform 2s ease; transition: transform 2s ease; }
-  #brand { font-size: 22px; letter-spacing: 3px; text-transform: uppercase; color: #8b95a5; }
-  #brand b { color: #ff7a45; font-weight: 700; }
-  #clock { font-size: 150px; font-weight: 300; line-height: 1; margin-top: 30px; letter-spacing: -4px; }
-  #clock span { font-size: 48px; letter-spacing: 0; color: #8b95a5; margin-left: 10px; }
-  #date { font-size: 36px; color: #c9d1dc; margin-top: 10px; }
-  #weatherRow { display: -webkit-box; display: -webkit-flex; display: flex; margin-top: 50px; }
-  .wx { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px;
-    padding: 18px 22px; margin-right: 16px; min-width: 120px; }
-  .wx .d { font-size: 18px; color: #8b95a5; text-transform: uppercase; letter-spacing: 1px; }
-  .wx .i { height: 52px; margin: 6px 0; }
-  .wx .t { font-size: 26px; }
-  .wx .t small { color: #8b95a5; font-size: 20px; }
-  .wx.now { min-width: 200px; background: rgba(255,122,69,0.12); border-color: rgba(255,122,69,0.35); }
-  .wx.now .t { font-size: 44px; }
-  #place { font-size: 18px; color: #8b95a5; margin-top: 14px; }
-  #footer { position: absolute; left: 0; right: 0; bottom: 0; font-size: 22px; color: #8b95a5; }
-  #footer b { color: #e8ecf2; font-weight: 500; }
-  #status { position: absolute; right: 0; bottom: 0; font-size: 20px; color: #3ccf8e; }
+  #home { background: #0b0e13; background-image: -webkit-linear-gradient(135deg, #0b0e13 0%, #131a25 60%, #1d140f 100%);
+    background-image: linear-gradient(135deg, #0b0e13 0%, #131a25 60%, #1d140f 100%); }
+  #header { position: absolute; left: 64px; right: 64px; top: 40px; height: 150px; }
+  #brand { font-size: 18px; letter-spacing: 3px; text-transform: uppercase; color: #8b95a5; }
+  #brand b { color: #ff7a45; }
+  #clock { font-size: 84px; font-weight: 300; line-height: 1; margin-top: 10px; letter-spacing: -2px; }
+  #clock span { font-size: 30px; color: #8b95a5; margin-left: 6px; letter-spacing: 0; }
+  #date { font-size: 24px; color: #c9d1dc; margin-top: 6px; }
+  #weather { position: absolute; right: 0; top: 22px; }
+  .wx { text-align: center; margin-left: 22px; }
+  .wx .d { font-size: 15px; color: #8b95a5; text-transform: uppercase; letter-spacing: 1px; }
+  .wx .i { height: 44px; margin: 4px 0; }
+  .wx .t { font-size: 20px; }
+  .wx .t small { color: #8b95a5; font-size: 16px; }
+  .wx.now .t { font-size: 34px; }
+  #place { position: absolute; right: 0; top: 0; font-size: 15px; color: #8b95a5; }
+  #status { position: absolute; right: 64px; bottom: 26px; font-size: 18px; color: #3ccf8e; }
+  #hint { position: absolute; left: 64px; bottom: 26px; font-size: 18px; color: #8b95a5; }
 
-  /* ---------- message ---------- */
-  #message { background: rgba(8,10,14,0.92); display: -webkit-box; display: -webkit-flex; display: flex;
-    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
-    -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center; text-align: center; }
-  #messageText { font-size: 72px; font-weight: 500; max-width: 80%; line-height: 1.2; }
-  #messageFrom { font-size: 26px; color: #ff7a45; margin-bottom: 24px; letter-spacing: 2px; text-transform: uppercase; }
+  #rows { position: absolute; left: 0; right: 0; top: 215px; bottom: 60px; overflow: hidden; }
+  #rowsInner { -webkit-transition: -webkit-transform 0.25s ease; transition: transform 0.25s ease; }
+  .row { height: 236px; }
+  .row h2 { margin: 0 0 12px 64px; font-size: 22px; font-weight: 500; color: #c9d1dc; }
+  .strip { white-space: nowrap; padding-left: 64px; -webkit-transition: -webkit-transform 0.25s ease; transition: transform 0.25s ease; }
+  .tile { display: inline-block; vertical-align: top; width: 256px; margin-right: 22px; white-space: normal;
+    -webkit-transition: -webkit-transform 0.15s ease; transition: transform 0.15s ease; }
+  .tile .pic { width: 256px; height: 144px; border-radius: 10px; background: #1b222d center/cover no-repeat;
+    border: 3px solid transparent; position: relative; overflow: hidden; }
+  .tile .pic .big { position: absolute; left: 0; right: 0; top: 46px; text-align: center; }
+  .tile .pic .tag { position: absolute; right: 8px; bottom: 8px; background: rgba(0,0,0,0.75); color: #f5b942;
+    font-size: 13px; padding: 2px 7px; border-radius: 6px; }
+  .tile .pic .bar { position: absolute; left: 0; bottom: 0; height: 5px; background: #ff7a45; }
+  .tile .name { font-size: 17px; margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c9d1dc; }
+  .tile .meta { font-size: 14px; color: #8b95a5; margin-top: 2px; }
+  .tile.focus { -webkit-transform: scale(1.08); transform: scale(1.08); }
+  .tile.focus .pic { border-color: #ff7a45; }
+  .tile.focus .name { color: #fff; }
+  .tile.photo { width: 144px; }
+  .tile.photo .pic { width: 144px; }
 
-  /* ---------- website ---------- */
+  /* ---------- photos ---------- */
+  #photo { background: #000; }
+  .ph { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000 center/contain no-repeat;
+    opacity: 0; -webkit-transition: opacity 1.2s ease; transition: opacity 1.2s ease; }
+  .ph.on { opacity: 1; }
+  #photoInfo { position: absolute; left: 40px; bottom: 30px; font-size: 22px; color: rgba(255,255,255,0.85);
+    text-shadow: 0 1px 6px #000; }
+  #photoClock { position: absolute; right: 48px; bottom: 30px; font-size: 54px; font-weight: 300; color: #fff;
+    text-shadow: 0 2px 10px #000; }
+
+  /* ---------- message / toast ---------- */
+  #message { background: rgba(8,10,14,0.92); text-align: center; }
+  #messageBox { position: absolute; left: 10%; right: 10%; top: 50%; -webkit-transform: translateY(-50%); transform: translateY(-50%); }
+  #messageFrom { font-size: 24px; color: #ff7a45; margin-bottom: 20px; letter-spacing: 2px; text-transform: uppercase; }
+  #messageText { font-size: 66px; font-weight: 500; line-height: 1.2; }
+  #toast { position: absolute; top: 30px; right: 40px; background: rgba(23,27,34,0.95); border: 1px solid #2a313d;
+    border-left: 5px solid #ff7a45; padding: 14px 22px; border-radius: 10px; font-size: 22px; max-width: 520px; }
+
+  /* ---------- website / video ---------- */
   #web { background: #fff; }
   #web iframe { width: 100%; height: 100%; border: 0; }
-
-  /* ---------- video ---------- */
   cast-media-player { --theme-hue: 20; --progress-color: #ff7a45; --splash-image: none; }
   #player { width: 100%; height: 100%; }
 </style>
@@ -54,29 +82,34 @@
 <body>
 
 <div id="home" class="layer">
-  <div id="homeInner">
+  <div id="header">
     <div id="brand"><b>Cast</b> Hub · <span id="tvName">Lounge TV</span></div>
     <div id="clock">--:--</div>
     <div id="date"></div>
-    <div id="weatherRow"></div>
     <div id="place"></div>
-    <div id="footer">Open <b>Cast Hub</b> on your phone to play something</div>
-    <div id="status"></div>
+    <div id="weather" class="flex"></div>
   </div>
+  <div id="rows"><div id="rowsInner"></div></div>
+  <div id="hint">Use the Remote tab in the Cast Hub app to move around</div>
+  <div id="status"></div>
+</div>
+
+<div id="photo" class="layer hidden">
+  <div id="phA" class="ph"></div><div id="phB" class="ph"></div>
+  <div id="photoInfo"></div><div id="photoClock"></div>
 </div>
 
 <div id="web" class="layer hidden"><iframe id="webFrame" src="about:blank"></iframe></div>
-
 <div id="playerWrap" class="layer hidden"><cast-media-player id="player"></cast-media-player></div>
-
-<div id="message" class="layer hidden">
-  <div><div id="messageFrom">Message</div><div id="messageText"></div></div>
-</div>
+<div id="message" class="layer hidden"><div id="messageBox"><div id="messageFrom">Message</div><div id="messageText"></div></div></div>
+<div id="toast" class="hidden"></div>
 
 <script>
 (function () {
   var NS = 'urn:x-cast:com.shawn.casthub';
   var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
   // ---------------- settings (remembered on the Chromecast) ----------------
   var settings = { place: 'Brisbane', lat: -27.4698, lon: 153.0251, name: 'Lounge TV', h24: false };
@@ -88,9 +121,12 @@
   function show(m) {
     mode = m;
     $('home').className = 'layer' + (m === 'home' ? '' : ' hidden');
+    $('photo').className = 'layer' + (m === 'photo' ? '' : ' hidden');
     $('web').className = 'layer' + (m === 'web' ? '' : ' hidden');
     $('playerWrap').className = 'layer' + (m === 'video' ? '' : ' hidden');
     if (m !== 'web') $('webFrame').src = 'about:blank';
+    if (m !== 'photo') stopSlideshow();
+    poke();
   }
 
   // ---------------- clock ----------------
@@ -98,22 +134,18 @@
   var SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
-  function tick() {
+  function timeParts() {
     var d = new Date(), h = d.getHours(), ampm = '';
     if (!settings.h24) { ampm = h < 12 ? 'am' : 'pm'; h = h % 12 || 12; }
-    $('clock').innerHTML = h + ':' + pad(d.getMinutes()) + (ampm ? '<span>' + ampm + '</span>' : '');
-    $('date').textContent = DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()];
+    return { t: h + ':' + pad(d.getMinutes()), ampm: ampm, d: d };
+  }
+  function tick() {
+    var p = timeParts();
+    $('clock').innerHTML = p.t + (p.ampm ? '<span>' + p.ampm + '</span>' : '');
+    $('date').textContent = DAYS[p.d.getDay()] + ', ' + p.d.getDate() + ' ' + MONTHS[p.d.getMonth()];
+    $('photoClock').textContent = p.t;
   }
   tick(); setInterval(tick, 1000);
-
-  // Nudge the layout a little every few minutes so nothing burns into the TV.
-  var drift = 0;
-  setInterval(function () {
-    drift = (drift + 1) % 4;
-    var x = [0, 12, 0, -12][drift], y = [0, 8, 14, 6][drift];
-    $('homeInner').style.webkitTransform = 'translate(' + x + 'px,' + y + 'px)';
-    $('homeInner').style.transform = 'translate(' + x + 'px,' + y + 'px)';
-  }, 180000);
 
   // ---------------- weather (Open-Meteo, no key needed) ----------------
   function get(url, cb) {
@@ -126,7 +158,6 @@
     };
     x.send();
   }
-  // Drawn icons (the 1st-gen Chromecast has no colour-emoji font).
   var CLOUD = '<path d="M16 38h30a10 10 0 0 0 0-20 14 14 0 0 0-27-3A11 11 0 0 0 16 38z" fill="#c9d1dc"/>';
   var ICONS = {
     sun: '<circle cx="32" cy="32" r="11" fill="#f5b942"/><g stroke="#f5b942" stroke-width="4" stroke-linecap="round">' +
@@ -145,95 +176,268 @@
   function icon(code) {
     var k = code === 0 ? 'sun' : code <= 2 ? 'part' : code === 3 ? 'cloud' : code <= 48 ? 'fog' :
       (code <= 67 || (code >= 80 && code <= 82)) ? 'rain' : (code <= 77 || code === 85 || code === 86) ? 'snow' : 'storm';
-    return '<svg width="52" height="52" viewBox="0 0 64 64">' + ICONS[k] + '</svg>';
+    return '<svg width="44" height="44" viewBox="0 0 64 64">' + ICONS[k] + '</svg>';
   }
   function loadWeather() {
-    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + settings.lat + '&longitude=' + settings.lon +
-      '&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4';
-    get(url, function (w) {
-      if (!w || !w.current) return;
-      var html = '<div class="wx now"><div class="d">Now</div><div class="i">' + icon(w.current.weather_code) +
-        '</div><div class="t">' + Math.round(w.current.temperature_2m) + '°</div></div>';
-      for (var i = 1; i < w.daily.time.length; i++) {
-        var day = new Date(w.daily.time[i] + 'T12:00:00');
-        html += '<div class="wx"><div class="d">' + SHORT[day.getDay()] + '</div><div class="i">' + icon(w.daily.weather_code[i]) +
-          '</div><div class="t">' + Math.round(w.daily.temperature_2m_max[i]) + '° <small>' + Math.round(w.daily.temperature_2m_min[i]) + '°</small></div></div>';
-      }
-      $('weatherRow').innerHTML = html;
-      $('place').textContent = settings.place;
-    });
+    get('https://api.open-meteo.com/v1/forecast?latitude=' + settings.lat + '&longitude=' + settings.lon +
+      '&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4',
+      function (w) {
+        if (!w || !w.current) return;
+        var html = '<div class="wx now"><div class="d">Now</div><div class="i">' + icon(w.current.weather_code) +
+          '</div><div class="t">' + Math.round(w.current.temperature_2m) + '°</div></div>';
+        for (var i = 1; i < w.daily.time.length; i++) {
+          var day = new Date(w.daily.time[i] + 'T12:00:00');
+          html += '<div class="wx"><div class="d">' + SHORT[day.getDay()] + '</div><div class="i">' + icon(w.daily.weather_code[i]) +
+            '</div><div class="t">' + Math.round(w.daily.temperature_2m_max[i]) + '° <small>' + Math.round(w.daily.temperature_2m_min[i]) + '°</small></div></div>';
+        }
+        $('weather').innerHTML = html;
+        $('place').textContent = settings.place;
+      });
   }
   loadWeather(); setInterval(loadWeather, 20 * 60 * 1000);
-
   function setPlace(name) {
     get('https://geocoding-api.open-meteo.com/v1/search?count=1&name=' + encodeURIComponent(name), function (r) {
       var p = r && r.results && r.results[0];
-      if (!p) { showMessage('Couldn\'t find "' + name + '"', 'Weather', 5); return; }
+      if (!p) { toast('Couldn\'t find "' + name + '"'); return; }
       settings.place = p.name + (p.admin1 ? ', ' + p.admin1 : '');
       settings.lat = p.latitude; settings.lon = p.longitude;
       saveSettings(); loadWeather();
     });
   }
-
   function applyName() { $('tvName').textContent = settings.name; }
   applyName();
 
-  // ---------------- messages ----------------
-  var msgTimer = null;
+  // ---------------- messages / toast ----------------
+  var msgTimer = null, toastTimer = null;
   function showMessage(text, from, seconds) {
     $('messageText').textContent = text;
     $('messageFrom').textContent = from || 'Message';
     $('message').className = 'layer';
     clearTimeout(msgTimer);
-    msgTimer = setTimeout(function () { $('message').className = 'layer hidden'; }, (seconds || 15) * 1000);
+    msgTimer = setTimeout(hideMessage, (seconds || 15) * 1000);
+  }
+  function hideMessage() { $('message').className = 'layer hidden'; }
+  function toast(text, seconds) {
+    $('toast').textContent = text;
+    $('toast').className = '';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { $('toast').className = 'hidden'; }, (seconds || 4) * 1000);
   }
 
-  // ---------------- commands from the phone ----------------
+  // ---------------- library (sent by the phone) ----------------
+  var lib = { base: '', token: '', videos: [], photos: [], resume: {} };
+  var rows = [];           // [{title, items:[{kind, ...}]}]
+  var fr = 0, fc = 0;      // focused row / column
+  var colMemory = {};
+
+  function thumbUrl(kind, id) { return lib.base + '/' + kind + '/' + lib.token + '/' + id; }
+  function fmtTime(s) { s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+    return h ? h + 'h ' + m + 'm' : m + 'm ' + (s % 60) + 's'; }
+
+  function buildRows() {
+    rows = [];
+    var cont = [];
+    for (var i = 0; i < lib.videos.length; i++) if (lib.resume[lib.videos[i].id]) cont.push(lib.videos[i]);
+    if (cont.length) rows.push({ title: 'Continue watching', items: map(cont, 'video') });
+    if (lib.videos.length) rows.push({ title: 'Your videos', items: map(lib.videos, 'video') });
+    if (lib.photos.length) {
+      var ph = [{ kind: 'slideshow' }];
+      for (var j = 0; j < lib.photos.length; j++) ph.push({ kind: 'photo', id: lib.photos[j], index: j });
+      rows.push({ title: 'Photos', items: ph });
+    }
+    var actions = [{ kind: 'action', act: 'clock', label: 'Clock screensaver', big: SVG.clock }];
+    if (lib.photos.length) actions.unshift({ kind: 'action', act: 'slideshow', label: 'Photo slideshow', big: SVG.play });
+    rows.push({ title: 'Cast Hub', items: actions });
+    if (!lib.videos.length && !lib.photos.length) {
+      rows[rows.length - 1].items.unshift({ kind: 'action', act: 'none', label: 'Open Cast Hub on your phone', big: SVG.phone });
+    }
+    if (fr >= rows.length) fr = 0;
+    render();
+  }
+  // Drawn icons: the 1st-gen Chromecast lacks emoji and many symbol glyphs.
+  var SVG = {
+    play: '<svg width="48" height="48" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="#ff7a45"/></svg>',
+    clock: '<svg width="48" height="48" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#ff7a45" stroke-width="2"/>' +
+      '<path d="M12 7v5l3 3" fill="none" stroke="#ff7a45" stroke-width="2" stroke-linecap="round"/></svg>',
+    phone: '<svg width="48" height="48" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2" fill="none" stroke="#ff7a45" stroke-width="2"/>' +
+      '<circle cx="12" cy="18" r="1.2" fill="#ff7a45"/></svg>'
+  };
+  function map(list, kind) { var out = []; for (var i = 0; i < list.length; i++) out.push({ kind: kind, v: list[i] }); return out; }
+
+  function tileHtml(it, r, c) {
+    var cls = 'tile' + (it.kind === 'photo' || it.kind === 'slideshow' ? ' photo' : '');
+    var pic = '', name = '', meta = '';
+    if (it.kind === 'video') {
+      var v = it.v, res = lib.resume[v.id];
+      pic = '<div class="pic" style="background-image:url(\'' + thumbUrl('t', v.id) + '\')">' +
+        (v.c ? '<div class="tag">Converts first</div>' : '') +
+        (res && v.d ? '<div class="bar" style="width:' + Math.min(100, Math.round(res * 100 / v.d)) + '%"></div>' : '') + '</div>';
+      name = esc(v.t); meta = esc(res ? 'Resume ' + fmtTime(res) : v.m);
+    } else if (it.kind === 'photo') {
+      pic = '<div class="pic" style="background-image:url(\'' + thumbUrl('q', it.id) + '\')"></div>';
+    } else if (it.kind === 'slideshow') {
+      pic = '<div class="pic"><div class="big">' + SVG.play + '</div></div>'; name = 'Slideshow';
+    } else {
+      pic = '<div class="pic"><div class="big">' + it.big + '</div></div>'; name = esc(it.label);
+    }
+    return '<div class="' + cls + '" id="t' + r + '_' + c + '">' + pic +
+      (name ? '<div class="name">' + name + '</div>' : '') + (meta ? '<div class="meta">' + meta + '</div>' : '') + '</div>';
+  }
+  function render() {
+    var html = '';
+    for (var r = 0; r < rows.length; r++) {
+      html += '<div class="row"><h2>' + esc(rows[r].title) + '</h2><div class="strip" id="s' + r + '">';
+      for (var c = 0; c < rows[r].items.length; c++) html += tileHtml(rows[r].items[c], r, c);
+      html += '</div></div>';
+    }
+    $('rowsInner').innerHTML = html;
+    focus(fr, Math.min(fc, rows[fr] ? rows[fr].items.length - 1 : 0));
+  }
+  function setT(el, x, y) { var t = 'translate(' + x + 'px,' + y + 'px)'; el.style.webkitTransform = t; el.style.transform = t; }
+  function focus(r, c) {
+    var old = $('t' + fr + '_' + fc); if (old) old.className = old.className.replace(' focus', '');
+    fr = r; fc = c;
+    var el = $('t' + r + '_' + c); if (el) el.className += ' focus';
+    // keep the focused row in view (show it as the top visible row once you move down)
+    setT($('rowsInner'), 0, -Math.max(0, r - 0) * 236);
+    // scroll the strip so the focused tile stays on screen
+    var tileW = (rows[r] && (rows[r].items[c].kind === 'photo' || rows[r].items[c].kind === 'slideshow')) ? 166 : 278;
+    var shift = Math.max(0, c - 2) * tileW;
+    var strip = $('s' + r); if (strip) setT(strip, -shift, 0);
+  }
+  function moveFocus(dr, dc) {
+    if (!rows.length) return;
+    if (dr) {
+      colMemory[fr] = fc;
+      var nr = Math.max(0, Math.min(rows.length - 1, fr + dr));
+      var nc = Math.min(colMemory[nr] || 0, rows[nr].items.length - 1);
+      focus(nr, nc);
+    } else {
+      focus(fr, Math.max(0, Math.min(rows[fr].items.length - 1, fc + dc)));
+    }
+  }
+  function activate() {
+    var it = rows[fr] && rows[fr].items[fc];
+    if (!it) return;
+    if (it.kind === 'video') {
+      toast(it.v.c ? 'Converting "' + it.v.t + '" on your phone…' : 'Starting "' + it.v.t + '"…', 6);
+      tellPhone({ type: 'play', id: it.v.id });
+    } else if (it.kind === 'photo') { openPhotos(it.index, false); }
+    else if (it.kind === 'slideshow' || it.act === 'slideshow') { openPhotos(0, true); }
+    else if (it.act === 'clock') { screensaver(true); }
+  }
+
+  // ---------------- photos / slideshow / screensaver ----------------
+  var phIndex = 0, phTimer = null, phFront = 'phA', clockOnly = false;
+  function setPhoto(i) {
+    if (!lib.photos.length) return;
+    phIndex = (i + lib.photos.length) % lib.photos.length;
+    var back = phFront === 'phA' ? 'phB' : 'phA';
+    var img = new Image();
+    img.onload = function () {
+      $(back).style.backgroundImage = 'url(\'' + img.src + '\')';
+      $(back).className = 'ph on'; $(phFront).className = 'ph'; phFront = back;
+    };
+    img.src = thumbUrl('p', lib.photos[phIndex]);
+    $('photoInfo').textContent = (phIndex + 1) + ' / ' + lib.photos.length;
+  }
+  function openPhotos(i, slideshow) {
+    clockOnly = false;
+    show('photo'); setPhoto(i);
+    if (slideshow) startSlideshow();
+  }
+  function startSlideshow() { stopSlideshow(); phTimer = setInterval(function () { setPhoto(phIndex + 1); }, 8000); }
+  function stopSlideshow() { if (phTimer) { clearInterval(phTimer); phTimer = null; } }
+  function screensaver(force) {
+    if (lib.photos.length && !force) { openPhotos(Math.floor(Math.random() * lib.photos.length), true); $('photoInfo').textContent = ''; return; }
+    clockOnly = true; show('photo');
+    $('phA').className = 'ph'; $('phB').className = 'ph'; $('photoInfo').textContent = settings.place;
+  }
+  // Screensaver after 5 minutes on the home screen without remote use.
+  var lastPoke = new Date().getTime();
+  function poke() { lastPoke = new Date().getTime(); }
+  setInterval(function () {
+    if (mode === 'home' && new Date().getTime() - lastPoke > 5 * 60 * 1000) screensaver(false);
+  }, 15000);
+
+  // ---------------- remote keys ----------------
   var playerManager = null;
+  function key(k) {
+    poke(); hideMessage();
+    if (mode === 'home') {
+      if (k === 'up') moveFocus(-1, 0); else if (k === 'down') moveFocus(1, 0);
+      else if (k === 'left') moveFocus(0, -1); else if (k === 'right') moveFocus(0, 1);
+      else if (k === 'ok') activate();
+    } else if (mode === 'photo') {
+      if (clockOnly) { show('home'); return; }
+      if (k === 'left') { stopSlideshow(); setPhoto(phIndex - 1); }
+      else if (k === 'right') { stopSlideshow(); setPhoto(phIndex + 1); }
+      else if (k === 'ok') { if (phTimer) stopSlideshow(); else startSlideshow(); toast(phTimer ? 'Slideshow on' : 'Slideshow paused', 2); }
+      else if (k === 'back' || k === 'home' || k === 'up' || k === 'down') show('home');
+    } else if (mode === 'video' && playerManager) {
+      var S = cast.framework.messages.PlayerState;
+      if (k === 'ok') { if (playerManager.getPlayerState() === S.PLAYING) playerManager.pause(); else playerManager.play(); }
+      else if (k === 'left') playerManager.seek(Math.max(0, playerManager.getCurrentTimeSec() - 30));
+      else if (k === 'right') playerManager.seek(playerManager.getCurrentTimeSec() + 30);
+      else if (k === 'back' || k === 'home') { try { playerManager.stop(); } catch (e) {} show('home'); }
+    } else if (mode === 'web') {
+      if (k === 'back' || k === 'home') show('home');
+    }
+    if (k === 'home') show('home');
+  }
+
+  // ---------------- commands from the phone / PC ----------------
   function handle(cmd) {
     if (!cmd || !cmd.type) return;
-    if (cmd.type === 'home') {
-      if (playerManager) { try { playerManager.stop(); } catch (e) {} }
-      show('home');
-    } else if (cmd.type === 'message') {
-      showMessage(cmd.text || '', cmd.from, cmd.seconds);
-    } else if (cmd.type === 'web') {
-      if (playerManager) { try { playerManager.stop(); } catch (e) {} }
-      $('webFrame').src = cmd.url;
-      show('web');
-    } else if (cmd.type === 'config') {
+    var t = cmd.type;
+    if (t === 'key') { key(cmd.key); return; }
+    if (t === 'library') {
+      lib.base = cmd.base || ''; lib.token = cmd.token || '';
+      lib.videos = cmd.videos || []; lib.photos = cmd.photos || []; lib.resume = cmd.resume || {};
+      buildRows();
+      return;
+    }
+    if (t === 'status') { toast(cmd.text || '', cmd.seconds || 4); return; }
+    if (t === 'message') { showMessage(cmd.text || '', cmd.from, cmd.seconds); return; }
+    if (t === 'home') { if (playerManager && mode === 'video') { try { playerManager.stop(); } catch (e) {} } show('home'); }
+    else if (t === 'slideshow') { if (lib.photos.length) openPhotos(0, true); else toast('No photos shared from the phone yet'); }
+    else if (t === 'screensaver') { screensaver(true); }
+    else if (t === 'web') {
+      if (playerManager && mode === 'video') { try { playerManager.stop(); } catch (e) {} }
+      $('webFrame').src = cmd.url; show('web');
+    } else if (t === 'config') {
       if (cmd.name) { settings.name = cmd.name; applyName(); }
       if (typeof cmd.h24 === 'boolean') { settings.h24 = cmd.h24; tick(); }
       saveSettings();
       if (cmd.place) setPlace(cmd.place);
     }
-    if (cmd.type !== 'message') $('message').className = 'layer hidden';
+    hideMessage();
   }
 
+  buildRows();
+  window.__casthub = { handle: handle };  // used for local testing
+
   // ---------------- Cast framework ----------------
-  if (typeof cast === 'undefined' || !cast.framework) {
-    $('status').textContent = 'Offline mode';
-    return;
-  }
+  if (typeof cast === 'undefined' || !cast.framework) { $('status').textContent = 'Offline mode'; return; }
   var context = cast.framework.CastReceiverContext.getInstance();
   playerManager = context.getPlayerManager();
   var E = cast.framework.events.EventType;
 
-  playerManager.addEventListener(E.PLAYER_LOAD_COMPLETE, function () { show('video'); });
+  function tellPhone(obj) {
+    try { context.sendCustomMessage(NS, undefined, obj); } catch (e) { toast('Open Cast Hub on your phone to play videos', 5); }
+  }
+
+  playerManager.addEventListener(E.PLAYER_LOAD_COMPLETE, function () { hideMessage(); show('video'); });
   playerManager.addEventListener(E.MEDIA_FINISHED, function () { show('home'); });
   playerManager.addEventListener(E.ERROR, function () {
     show('home');
-    showMessage('That video couldn\'t play on this Chromecast. Try "Convert & play" in the app.', 'Playback error', 10);
+    showMessage('That video couldn\'t play on this Chromecast. Try converting it in the app.', 'Playback error', 10);
   });
-  // Video is loading: switch to the player so its spinner shows.
   playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, function (req) {
-    $('message').className = 'layer hidden';
-    show('video');
-    return req;
+    hideMessage(); show('video'); return req;
   });
   playerManager.setMessageInterceptor(cast.framework.messages.MessageType.STOP, function (req) {
-    setTimeout(function () { show('home'); }, 300);
-    return req;
+    setTimeout(function () { show('home'); }, 300); return req;
   });
 
   context.addCustomMessageListener(NS, function (event) {
@@ -241,15 +445,16 @@
     if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
     handle(data);
   });
-  context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, function () {
-    $('status').textContent = '● Phone connected';
+  context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, function (e) {
+    $('status').textContent = '● Remote connected';
+    setTimeout(function () { try { context.sendCustomMessage(NS, e.senderId, { type: 'hello' }); } catch (x) {} }, 1500);
   });
   context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function () {
     if (context.getSenders().length === 0) $('status').textContent = '';
   });
 
   var options = new cast.framework.CastReceiverOptions();
-  options.disableIdleTimeout = true;       // keep the home screen up after the phone disconnects
+  options.disableIdleTimeout = true;
   options.maxInactivity = 3600;
   options.customNamespaces = {};
   options.customNamespaces[NS] = cast.framework.system.MessageType.JSON;

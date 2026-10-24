@@ -23,6 +23,7 @@ class VideoAdapter(
     private val hasSubtitles: (Video) -> Boolean,
     private val progressOf: (Video) -> Int?,
     private val isConverted: (Video) -> Boolean,
+    private val resumeOf: (Video) -> Long,
     private val onPlay: (Video) -> Unit,
     private val onSubtitles: (Video) -> Unit,
 ) : RecyclerView.Adapter<VideoAdapter.Holder>() {
@@ -52,6 +53,8 @@ class VideoAdapter(
         if (v.durationMs > 0) bits += formatDuration(v.durationMs)
         bits += formatSize(v.size)
         if (v.folder.isNotEmpty()) bits += v.folder
+        val res = resumeOf(v)
+        if (res > 0) bits.add(0, "▶ Resume ${formatDuration(res * 1000)}")
         h.meta.text = bits.joinToString(" · ")
 
         val c = compatOf(v)

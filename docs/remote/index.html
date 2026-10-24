@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cast Hub Remote</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171b22; --panel2: #1f2530; --line: #2a313d;
+    --text: #e8ecf2; --muted: #8b95a5; --accent: #ff7a45; --on-accent: #1a0d06; --ok: #3ccf8e; --bad: #ff5d6c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 Inter, system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+  .logo { font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+  .logo span { color: var(--accent); }
+  #status { color: var(--muted); font-size: 14px; flex: 1; }
+  #status.on { color: var(--ok); }
+  google-cast-launcher { width: 34px; height: 34px; cursor: pointer; --connected-color: var(--accent); --disconnected-color: var(--text); }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 340px 1fr; gap: 24px; }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+  h2 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+
+  /* d-pad */
+  .dpad { position: relative; width: 260px; height: 260px; margin: 6px auto 18px; border-radius: 50%;
+    background: var(--panel2); border: 1px solid var(--line); }
+  .dpad button { position: absolute; background: none; border: 0; color: var(--text); width: 76px; height: 76px;
+    font-size: 26px; cursor: pointer; border-radius: 50%; }
+  .dpad button:hover { background: rgba(255,255,255,0.05); }
+  .dpad button:active { background: rgba(255,255,255,0.1); }
+  .dpad .up { top: 4px; left: 92px; } .dpad .down { bottom: 4px; left: 92px; }
+  .dpad .left { left: 4px; top: 92px; } .dpad .right { right: 4px; top: 92px; }
+  .dpad .ok { top: 80px; left: 80px; width: 100px; height: 100px; background: var(--accent); color: var(--on-accent);
+    font-weight: 700; font-size: 20px; }
+  .dpad .ok:hover { background: #ff9a70; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .btn { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 12px;
+    padding: 10px 16px; font: inherit; font-weight: 500; cursor: pointer; }
+  .btn:hover { border-color: #3b4452; }
+  .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+  .keys { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 14px; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+
+  /* now playing */
+  #np { display: none; }
+  #np.show { display: block; }
+  #npTitle { font-weight: 600; font-size: 17px; margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .times { display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+  .vol { display: flex; align-items: center; gap: 10px; color: var(--muted); margin-top: 12px; }
+
+  .stack > * + * { margin-top: 14px; }
+  .field { display: flex; gap: 8px; }
+  .field input { flex: 1; min-width: 0; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 10px 12px; font: inherit; }
+  .field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label.sm { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tiles .btn { padding: 14px 10px; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(120px); background: var(--panel2);
+    border: 1px solid var(--line); padding: 10px 18px; border-radius: 12px; transition: transform 0.25s; }
+  #toast.on { transform: translateX(-50%) translateY(0); }
+  #notChrome { display: none; background: #3a1d22; border: 1px solid var(--bad); color: #ffd4d9; padding: 12px 16px;
+    border-radius: 12px; margin: 16px 24px 0; }
+  details { color: var(--muted); font-size: 13px; }
+  details input { margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span>Cast</span> Hub Remote</div>
+  <div id="status">Not connected — click the Cast icon</div>
+  <google-cast-launcher title="Connect to your TV"></google-cast-launcher>
+</header>
+<div id="notChrome">This remote needs <b>Google Chrome</b> (or Microsoft Edge) on a computer on the same Wi-Fi as your TV.</div>
+
+<main>
+  <section class="stack">
+    <div class="card">
+      <h2>Remote</h2>
+      <div class="dpad">
+        <button class="up" data-k="up" aria-label="Up">▲</button>
+        <button class="left" data-k="left" aria-label="Left">◀</button>
+        <button class="ok" data-k="ok">OK</button>
+        <button class="right" data-k="right" aria-label="Right">▶</button>
+        <button class="down" data-k="down" aria-label="Down">▼</button>
+      </div>
+      <div class="row">
+        <button class="btn" data-k="back">← Back</button>
+        <button class="btn" data-k="home">⌂ Home</button>
+        <button class="btn" id="playPause">⏯ Play/Pause</button>
+      </div>
+      <div class="keys"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move · <kbd>Enter</kbd> OK · <kbd>Esc</kbd> back · <kbd>H</kbd> home · <kbd>Space</kbd> play/pause</div>
+    </div>
+
+    <div class="card" id="np">
+      <h2>Now playing</h2>
+      <div id="npTitle">—</div>
+      <input type="range" id="seek" min="0" max="100" value="0">
+      <div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+      <div class="row">
+        <button class="btn" id="back30">−30s</button>
+        <button class="btn primary" id="npPlay">Pause</button>
+        <button class="btn" id="fwd30">+30s</button>
+        <button class="btn" id="stop">Stop</button>
+      </div>
+      <div class="vol">🔈<input type="range" id="volume" min="0" max="100" value="50">🔊</div>
+    </div>
+  </section>
+
+  <section class="stack">
+    <div class="card">
+      <h2>On the TV</h2>
+      <div class="tiles">
+        <button class="btn" data-cmd="home">Home screen</button>
+        <button class="btn" data-cmd="slideshow">Photo slideshow</button>
+        <button class="btn" data-cmd="screensaver">Clock</button>
+      </div>
+    </div>
+
+    <div class="card stack">
+      <h2>Send to the TV</h2>
+      <div>
+        <label class="sm" for="msg">Message (pops up full screen)</label>
+        <div class="field"><input id="msg" placeholder="Dinner's ready!"><button class="btn primary" id="sendMsg">Send</button></div>
+      </div>
+      <div>
+        <label class="sm" for="web">Website (simple pages only — many sites block this)</label>
+        <div class="field"><input id="web" placeholder="https://…"><button class="btn" id="sendWeb">Show</button></div>
+      </div>
+      <div>
+        <label class="sm" for="link">Video link (direct .mp4 / .m3u8)</label>
+        <div class="field"><input id="link" placeholder="https://…/movie.mp4"><button class="btn" id="sendLink">Play</button></div>
+      </div>
+    </div>
+
+    <div class="card stack">
+      <h2>Home screen settings</h2>
+      <div>
+        <label class="sm" for="place">Weather location</label>
+        <div class="field"><input id="place" placeholder="Brisbane"><button class="btn" id="setPlace">Set</button></div>
+      </div>
+      <div>
+        <label class="sm" for="tvname">TV name</label>
+        <div class="field"><input id="tvname" placeholder="Lounge TV"><button class="btn" id="setName">Set</button></div>
+      </div>
+      <div class="row" style="justify-content:flex-start">
+        <button class="btn" id="h12">12-hour clock</button>
+        <button class="btn" id="h24">24-hour clock</button>
+      </div>
+      <details>
+        <summary>Receiver App ID</summary>
+        <div class="field"><input id="appId"><button class="btn" id="saveApp">Save &amp; reload</button></div>
+      </details>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+  var NS = 'urn:x-cast:com.shawn.casthub';
+  var DEFAULT_APP = '8E6ED475';
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  var APP_ID = store('casthub.appId') || DEFAULT_APP;
+  var $ = function (id) { return document.getElementById(id); };
+  var toastT;
+  function toast(t) { var el = $('toast'); el.textContent = t; el.className = 'on'; clearTimeout(toastT); toastT = setTimeout(function () { el.className = ''; }, 2600); }
+  function fmt(s) { s = Math.max(0, Math.floor(s || 0)); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
+
+  var ctx = null, player = null, controller = null;
+
+  window['__onGCastApiAvailable'] = function (ok) {
+    if (!ok) { $('notChrome').style.display = 'block'; return; }
+    ctx = cast.framework.CastContext.getInstance();
+    ctx.setOptions({ receiverApplicationId: APP_ID, autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED });
+    ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, updateStatus);
+    player = new cast.framework.RemotePlayer();
+    controller = new cast.framework.RemotePlayerController(player);
+    controller.addEventListener(cast.framework.RemotePlayerEventType.ANY_CHANGE, renderPlayer);
+    updateStatus();
+  };
+  setTimeout(function () { if (!window.cast || !window.cast.framework) $('notChrome').style.display = 'block'; }, 4000);
+
+  function session() { return ctx && ctx.getCurrentSession(); }
+  function updateStatus() {
+    var s = session();
+    $('status').textContent = s ? 'Connected to ' + s.getCastDevice().friendlyName : 'Not connected — click the Cast icon';
+    $('status').className = s ? 'on' : '';
+  }
+  function send(obj) {
+    var s = session();
+    if (!s) { toast('Connect to your TV first (Cast icon, top right)'); return; }
+    s.sendMessage(NS, obj).then(null, function () { toast('The TV didn\'t respond'); });
+  }
+  function key(k) { send({ type: 'key', key: k }); }
+
+  // ---- remote ----
+  document.querySelectorAll('[data-k]').forEach(function (b) { b.addEventListener('click', function () { key(b.dataset.k); }); });
+  document.querySelectorAll('[data-cmd]').forEach(function (b) { b.addEventListener('click', function () { send({ type: b.dataset.cmd }); }); });
+  function playPause() { if (player && player.isMediaLoaded) controller.playOrPause(); else key('ok'); }
+  $('playPause').onclick = playPause;
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    var map = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok', Escape: 'back', Backspace: 'back', h: 'home', H: 'home' };
+    if (e.key === ' ') { e.preventDefault(); playPause(); return; }
+    if (map[e.key]) { e.preventDefault(); key(map[e.key]); }
+  });
+
+  // ---- now playing ----
+  var seeking = false;
+  function renderPlayer() {
+    var show = player && player.isMediaLoaded;
+    $('np').className = 'card' + (show ? ' show' : '');
+    if (!show) return;
+    var title = player.mediaInfo && player.mediaInfo.metadata && player.mediaInfo.metadata.title;
+    $('npTitle').textContent = title || 'Playing';
+    $('npPlay').textContent = player.isPaused ? 'Play' : 'Pause';
+    if (!seeking) { $('seek').max = Math.max(1, Math.floor(player.duration)); $('seek').value = Math.floor(player.currentTime); }
+    $('cur').textContent = fmt(player.currentTime); $('dur').textContent = fmt(player.duration);
+    $('volume').value = Math.round(player.volumeLevel * 100);
+  }
+  $('npPlay').onclick = function () { controller.playOrPause(); };
+  $('stop').onclick = function () { controller.stop(); };
+  $('back30').onclick = function () { player.currentTime = Math.max(0, player.currentTime - 30); controller.seek(); };
+  $('fwd30').onclick = function () { player.currentTime = player.currentTime + 30; controller.seek(); };
+  $('seek').oninput = function () { seeking = true; $('cur').textContent = fmt(this.value); };
+  $('seek').onchange = function () { player.currentTime = Number(this.value); controller.seek(); seeking = false; };
+  $('volume').onchange = function () { player.volumeLevel = this.value / 100; controller.setVolumeLevel(); };
+
+  // ---- send ----
+  $('sendMsg').onclick = function () { var t = $('msg').value.trim(); if (t) { send({ type: 'message', text: t, from: 'Message', seconds: 20 }); $('msg').value = ''; } };
+  $('sendWeb').onclick = function () { var u = $('web').value.trim(); if (/^https?:\/\//.test(u)) send({ type: 'web', url: u }); else toast('Enter a link starting with https://'); };
+  $('sendLink').onclick = function () {
+    var u = $('link').value.trim(), s = session();
+    if (!s) return toast('Connect to your TV first');
+    if (!/^https?:\/\//.test(u)) return toast('Enter a link starting with https://');
+    var path = u.split(/[?#]/)[0].toLowerCase();
+    var type = /\.m3u8$/.test(path) ? 'application/x-mpegURL' : /\.webm$/.test(path) ? 'video/webm' : 'video/mp4';
+    var info = new chrome.cast.media.MediaInfo(u, type);
+    info.metadata = new chrome.cast.media.GenericMediaMetadata();
+    info.metadata.title = decodeURIComponent(path.split('/').pop() || 'Web video');
+    s.loadMedia(new chrome.cast.media.LoadRequest(info)).then(function () { toast('Playing on the TV'); }, function () { toast('The TV couldn\'t play that link'); });
+  };
+  $('setPlace').onclick = function () { var p = $('place').value.trim(); if (p) { send({ type: 'config', place: p }); store('casthub.place', p); toast('Weather set to ' + p); } };
+  $('setName').onclick = function () { var n = $('tvname').value.trim(); if (n) { send({ type: 'config', name: n }); store('casthub.name', n); toast('Renamed'); } };
+  $('h12').onclick = function () { send({ type: 'config', h24: false }); };
+  $('h24').onclick = function () { send({ type: 'config', h24: true }); };
+  $('appId').value = APP_ID;
+  $('saveApp').onclick = function () { store('casthub.appId', $('appId').value.trim().toUpperCase() || DEFAULT_APP); location.reload(); };
+  $('place').value = store('casthub.place') || '';
+  $('tvname').value = store('casthub.name') || '';
+  var ENTER = { msg: 'sendMsg', web: 'sendWeb', link: 'sendLink', place: 'setPlace', tvname: 'setName' };
+  Object.keys(ENTER).forEach(function (id) {
+    $(id).addEventListener('keydown', function (e) { if (e.key === 'Enter') $(ENTER[id]).click(); });
+  });
+</script>
+<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+</body>
+</html>

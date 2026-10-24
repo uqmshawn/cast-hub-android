@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/nav_videos" android:icon="@drawable/ic_video" android:title="Videos" />
+    <item android:id="@+id/nav_remote" android:icon="@drawable/ic_remote" android:title="Remote" />
+    <item android:id="@+id/nav_tv" android:icon="@drawable/ic_tv" android:title="TV" />
+</menu>

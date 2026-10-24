@@ -2,10 +2,19 @@ package com.shawn.casthub
 
 import android.content.ContentUris
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.LruCache
+import android.util.Size
 import fi.iki.elonen.NanoHTTPD
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
@@ -25,6 +34,9 @@ class MediaServer(private val ctx: Context, port: Int, private val token: String
             when (parts[0]) {
                 "v" -> video(id, session)
                 "s" -> subtitles(id)
+                "t" -> image("t$id") { videoThumb(id) }
+                "q" -> image("q$id") { photo(id, 320) }
+                "p" -> image("p$id") { photo(id, 1280) }
                 else -> notFound()
             }
         } catch (e: Exception) {
@@ -87,6 +99,78 @@ class MediaServer(private val ctx: Context, port: Int, private val token: String
             ?: return notFound()
         return newFixedLengthResponse(Response.Status.OK, "text/vtt; charset=utf-8", Videos.srtToVtt(text))
             .apply { addHeader("Access-Control-Allow-Origin", "*") }
+    }
+
+    // ---------- images for the TV home screen ----------
+
+    private fun image(key: String, make: () -> Bitmap?): Response {
+        val bytes = cache.get(key) ?: run {
+            val bmp = make() ?: return notFound()
+            val out = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            out.toByteArray().also { cache.put(key, it) }
+        }
+        return newFixedLengthResponse(Response.Status.OK, "image/jpeg", ByteArrayInputStream(bytes), bytes.size.toLong())
+            .apply {
+                addHeader("Access-Control-Allow-Origin", "*")
+                addHeader("Cache-Control", "max-age=3600")
+            }
+    }
+
+    private fun videoThumb(id: Long): Bitmap? {
+        val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                ctx.contentResolver.loadThumbnail(uri, Size(512, 288), null)
+            } else {
+                val r = MediaMetadataRetriever()
+                try {
+                    r.setDataSource(ctx, uri)
+                    r.getFrameAtTime(1_000_000)?.let { scaleDown(it, 512) }
+                } finally {
+                    r.release()
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun photo(id: Long, max: Int): Bitmap? {
+        val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+        return try {
+            if (Build.VERSION.SDK_INT >= 28) {
+                // ImageDecoder also applies the photo's rotation (EXIF)
+                ImageDecoder.decodeBitmap(ImageDecoder.createSource(ctx.contentResolver, uri)) { dec, info, _ ->
+                    val w = info.size.width
+                    val h = info.size.height
+                    val scale = minOf(1.0, max.toDouble() / maxOf(w, h))
+                    dec.setTargetSize(maxOf(1, (w * scale).toInt()), maxOf(1, (h * scale).toInt()))
+                    dec.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                var sample = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= max) sample *= 2
+                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                    ?.let { scaleDown(it, max) }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun scaleDown(b: Bitmap, max: Int): Bitmap {
+        val big = maxOf(b.width, b.height)
+        if (big <= max) return b
+        val s = max.toFloat() / big
+        return Bitmap.createScaledBitmap(b, (b.width * s).toInt(), (b.height * s).toInt(), true)
+    }
+
+    private val cache = object : LruCache<String, ByteArray>(12 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ByteArray) = value.size
     }
 
     private fun notFound() = newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "not found")
