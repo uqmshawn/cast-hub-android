@@ -62,7 +62,7 @@ class VideoAdapter(
         val prog = progressOf(v)
         when {
             prog != null -> {
-                h.badge.text = "Converting for your Chromecast… $prog%"
+                h.badge.text = if (LiveConvert.isLive(v.id)) "Playing while converting… $prog%" else "Converting for your Chromecast… $prog%"
                 h.badge.setTextColor(ContextCompat.getColor(context, R.color.accent))
             }
             isConverted(v) -> {

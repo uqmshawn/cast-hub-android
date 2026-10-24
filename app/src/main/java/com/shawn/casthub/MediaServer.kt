@@ -15,6 +15,9 @@ import android.util.Size
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
+import java.io.RandomAccessFile
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
@@ -45,13 +48,22 @@ class MediaServer(private val ctx: Context, port: Int, private val token: String
     }
 
     private fun video(id: Long, session: IHTTPSession): Response {
-        // Prefer the Chromecast-friendly converted copy if one exists.
+        // Prefer the Chromecast-friendly converted copy if one exists, then a live conversion in progress.
         val converted = Converted.file(ctx, id)
+        val live = LiveConvert.file
         val mime: String
         val pfd: ParcelFileDescriptor
         if (Converted.exists(ctx, id)) {
             mime = "video/mp4"
             pfd = ParcelFileDescriptor.open(converted, ParcelFileDescriptor.MODE_READ_ONLY)
+        } else if (LiveConvert.isLive(id) && live != null) {
+            if (!LiveConvert.done) {
+                // Still converting: stream the growing file. No byte ranges, so the TV plays it straight through.
+                return newChunkedResponse(Response.Status.OK, "video/mp4", GrowingInputStream(live))
+                    .apply { addHeader("Access-Control-Allow-Origin", "*") }
+            }
+            mime = "video/mp4"
+            pfd = ParcelFileDescriptor.open(live, ParcelFileDescriptor.MODE_READ_ONLY)
         } else {
             val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
             mime = ctx.contentResolver.getType(uri) ?: "video/mp4"
@@ -174,6 +186,39 @@ class MediaServer(private val ctx: Context, port: Int, private val token: String
     }
 
     private fun notFound() = newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "not found")
+}
+
+/** Reads a fragmented MP4 that is still being written, waiting for more data until conversion ends. */
+class GrowingInputStream(file: File) : InputStream() {
+    private val raf = RandomAccessFile(file, "r")
+    private var pos = 0L
+    private var safe = 0L
+
+    override fun read(): Int {
+        val one = ByteArray(1)
+        return if (read(one, 0, 1) <= 0) -1 else one[0].toInt() and 0xff
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        var waited = 0
+        while (true) {
+            safe = if (LiveConvert.done) raf.length() else maxOf(safe, LiveConvert.safeEnd(raf, safe))
+            if (pos < safe) {
+                raf.seek(pos)
+                val n = raf.read(b, off, minOf(len.toLong(), safe - pos).toInt())
+                if (n > 0) {
+                    pos += n
+                    return n
+                }
+            }
+            if (LiveConvert.done && pos >= raf.length()) return -1
+            if (LiveConvert.failed || waited > 120_000) return -1 // give up after 2 min with no new data
+            Thread.sleep(250)
+            waited += 250
+        }
+    }
+
+    override fun close() = raf.close()
 }
 
 /** Keeps one server running for the whole app. */

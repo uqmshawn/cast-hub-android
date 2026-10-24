@@ -109,6 +109,7 @@ class MainActivity : AppCompatActivity() {
         @Suppress("DEPRECATION")
         castContext = CastContext.getSharedInstance(this)
         converter = Converter(this)
+        if (!converter.isBusy && LiveConvert.id < 0) Converted.cleanLive(this)
 
         emptyView = findViewById(R.id.empty)
         search = findViewById(R.id.search)
@@ -317,7 +318,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun playVideo(v: Video) {
         if (progress.containsKey(v.id)) {
-            toast("Still converting — it will play when it's done")
+            if (LiveConvert.isLive(v.id)) castVideo(v, openControls = true, live = true)
+            else toast("Still converting — it will play when it's done")
             return
         }
         if (Converted.exists(this, v.id)) {
@@ -327,13 +329,15 @@ class MainActivity : AppCompatActivity() {
         val r = compat[v.id]
         if (r?.compat == Compat.MAYBE_NOT) {
             MaterialAlertDialogBuilder(this)
-                .setTitle("Convert for your Chromecast?")
+                .setTitle("Play on your Chromecast")
                 .setMessage(
-                    "${r.note}.\n\nYour 1st-gen Chromecast can't play this format. Cast Hub will make a " +
-                        "compatible copy on this phone (usually quicker than the video's length), then play it on the TV."
+                    "${r.note}.\n\nYour 1st-gen Chromecast can't play this format directly, so your phone converts it.\n\n" +
+                        "• Play now — starts in a few seconds and converts while it plays. Skipping ahead only " +
+                        "works up to the part already converted.\n" +
+                        "• Convert first — waits until it's done, then plays with full skipping."
                 )
-                .setPositiveButton("Convert & play") { _, _ -> convertThenPlay(v, r, fromTv = false) }
-                .setNeutralButton("Try anyway") { _, _ -> castVideo(v) }
+                .setPositiveButton("Play now") { _, _ -> playLive(v, r, fromTv = false) }
+                .setNeutralButton("Convert first") { _, _ -> convertThenPlay(v, r, fromTv = false) }
                 .setNegativeButton("Cancel", null)
                 .show()
         } else {
@@ -352,8 +356,10 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (fromTv) tvStatus("Converting \"${v.title}\" on your phone…", 6) else toast("Converting… keep Cast Hub open")
         var lastReported = 0
+        val out = Converted.file(this, v.id)
+        val tmp = java.io.File(out.parentFile, "${v.id}.part.mp4")
         converter.convert(
-            v, r.width, r.height,
+            v, r.width, r.height, tmp, fragmented = false,
             onProgress = { p ->
                 progress[v.id] = p
                 adapter.refresh(v.id)
@@ -362,7 +368,8 @@ class MainActivity : AppCompatActivity() {
                     tvStatus("Converting… $p%", 5)
                 }
             },
-            onDone = { ok, err ->
+            onDone = { converted, err ->
+                val ok = converted && tmp.renameTo(out)
                 progress.remove(v.id)
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 adapter.refresh(v.id)
@@ -378,8 +385,76 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun castVideo(v: Video, openControls: Boolean = true) {
-        val session = connectedSession { castVideo(v, openControls) } ?: return
+    /** Converts and plays at the same time: the TV starts after a short buffer while the phone keeps converting. */
+    private fun playLive(v: Video, r: CompatResult, fromTv: Boolean) {
+        if (converter.isBusy) {
+            val msg = "Another video is converting — wait for it to finish"
+            if (fromTv) tvStatus(msg) else toast(msg)
+            return
+        }
+        if (connectedSession { playLive(v, r, fromTv) } == null) return
+        val live = Converted.liveFile(this, v.id)
+        LiveConvert.start(v.id, live)
+        progress[v.id] = 0
+        adapter.refresh(v.id)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (fromTv) tvStatus("Getting \"${v.title}\" ready…", 6) else toast("Starting — the TV will begin in a few seconds")
+
+        var started = false
+        converter.convert(
+            v, r.width, r.height, live, fragmented = true,
+            onProgress = { p ->
+                progress[v.id] = p
+                adapter.refresh(v.id)
+            },
+            onDone = { ok, err ->
+                LiveConvert.finish(ok)
+                progress.remove(v.id)
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                adapter.refresh(v.id)
+                if (!ok) {
+                    val msg = "Conversion failed: $err"
+                    if (fromTv) tvStatus(msg, 8) else toast(msg)
+                    LiveConvert.clear()
+                    return@convert
+                }
+                if (!started) {
+                    started = true
+                    castVideo(v, openControls = !fromTv, live = true)
+                }
+                // Keep a normal copy so next time it plays instantly with full skipping.
+                converter.remux(live, Converted.file(this, v.id)) { saved ->
+                    if (saved) {
+                        LiveConvert.clear()
+                        live.delete() // the TV keeps reading through its open handle
+                        adapter.refresh(v.id)
+                        sendLibrary()
+                    }
+                }
+            },
+        )
+
+        // Start the TV once a few seconds of video are ready (or after 25 s at the latest).
+        val began = System.currentTimeMillis()
+        val h = android.os.Handler(mainLooper)
+        h.post(object : Runnable {
+            override fun run() {
+                if (started || LiveConvert.id != v.id || LiveConvert.failed) return
+                val ready = LiveConvert.safeBytes() > 1_500_000 || (progress[v.id] ?: 0) >= 3
+                if (ready || System.currentTimeMillis() - began > 25_000) {
+                    started = true
+                    castVideo(v, openControls = !fromTv, live = true)
+                } else {
+                    h.postDelayed(this, 400)
+                }
+            }
+        })
+    }
+
+    private fun castVideo(v: Video, openControls: Boolean = true) = castVideo(v, openControls, live = false)
+
+    private fun castVideo(v: Video, openControls: Boolean, live: Boolean) {
+        val session = connectedSession { castVideo(v, openControls, live) } ?: return
         val ip = Net.localIp()
         if (ip == null) {
             toast("Connect your phone to the same Wi-Fi as the TV")
@@ -399,7 +474,7 @@ class MainActivity : AppCompatActivity() {
         }
         val builder = MediaInfo.Builder("$base/v/$token/${v.id}")
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(if (Converted.exists(this, v.id)) "video/mp4" else v.mime ?: "video/mp4")
+            .setContentType(if (live || Converted.exists(this, v.id)) "video/mp4" else v.mime ?: "video/mp4")
             .setMetadata(meta)
         if (v.durationMs > 0) builder.setStreamDuration(v.durationMs)
 
@@ -419,7 +494,7 @@ class MainActivity : AppCompatActivity() {
             .setAutoplay(true)
         if (hasSubs) request.setActiveTrackIds(longArrayOf(1))
 
-        val resume = Prefs.resume(this, v.id)
+        val resume = if (live) 0 else Prefs.resume(this, v.id)
         if (resume > 0) {
             request.setCurrentTime(resume * 1000)
             toast("Resuming from ${formatTime(resume)}")
@@ -514,7 +589,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (progress.containsKey(id)) {
-            tvStatus("Still converting — it'll play when it's done")
+            if (LiveConvert.isLive(id)) castVideo(v, openControls = false, live = true)
+            else tvStatus("Still converting — it'll play when it's done")
             return
         }
         if (Converted.exists(this, id)) {
@@ -533,7 +609,7 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        if (r.compat == Compat.MAYBE_NOT) convertThenPlay(v, r, fromTv = true) else castVideo(v, openControls = false)
+        if (r.compat == Compat.MAYBE_NOT) playLive(v, r, fromTv = true) else castVideo(v, openControls = false)
     }
 
     /** Sends the video list, photo list and resume positions to the TV home screen. */
