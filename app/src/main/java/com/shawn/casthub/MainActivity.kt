@@ -359,7 +359,7 @@ class MainActivity : AppCompatActivity() {
         val out = Converted.file(this, v.id)
         val tmp = java.io.File(out.parentFile, "${v.id}.part.mp4")
         converter.convert(
-            v, r.width, r.height, tmp, fragmented = false,
+            v, r.width, r.height, tmp, fragmented = false, maxShortSide = 1080, bitrate = 6_000_000,
             onProgress = { p ->
                 progress[v.id] = p
                 adapter.refresh(v.id)
@@ -402,7 +402,7 @@ class MainActivity : AppCompatActivity() {
 
         var started = false
         converter.convert(
-            v, r.width, r.height, live, fragmented = true,
+            v, r.width, r.height, live, fragmented = true, maxShortSide = 720, bitrate = 3_000_000,
             onProgress = { p ->
                 progress[v.id] = p
                 adapter.refresh(v.id)
@@ -440,12 +440,13 @@ class MainActivity : AppCompatActivity() {
         h.post(object : Runnable {
             override fun run() {
                 if (started || LiveConvert.id != v.id || LiveConvert.failed) return
-                val ready = LiveConvert.safeBytes() > 1_500_000 || (progress[v.id] ?: 0) >= 3
-                if (ready || System.currentTimeMillis() - began > 25_000) {
+                // ~3 s of 720p video is enough to start; the phone keeps converting ahead of the TV.
+                val ready = LiveConvert.safeBytes() > 1_000_000 || (progress[v.id] ?: 0) >= 2
+                if (ready || System.currentTimeMillis() - began > 15_000) {
                     started = true
                     castVideo(v, openControls = !fromTv, live = true)
                 } else {
-                    h.postDelayed(this, 400)
+                    h.postDelayed(this, 250)
                 }
             }
         })

@@ -10,6 +10,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
@@ -133,6 +135,8 @@ class Converter(context: Context) {
         height: Int,
         output: File,
         fragmented: Boolean,
+        maxShortSide: Int,
+        bitrate: Int,
         onProgress: (Int) -> Unit,
         onDone: (ok: Boolean, error: String?) -> Unit,
     ) {
@@ -142,12 +146,13 @@ class Converter(context: Context) {
         }
         output.delete()
 
-        val effects = if (width > 0 && height > 0 && minOf(width, height) > 1080) {
+        // Scale so the short side is at most maxShortSide (1080p for saved copies, 720p for live playback).
+        val effects = if (width > 0 && height > 0 && minOf(width, height) > maxShortSide) {
             val p = if (width >= height) {
-                Presentation.createForHeight(1080)
+                Presentation.createForHeight(maxShortSide)
             } else {
-                val h = ((1080L * height / width) / 2 * 2).toInt()
-                Presentation.createForWidthAndHeight(1080, h, Presentation.LAYOUT_SCALE_TO_FIT)
+                val h = ((maxShortSide.toLong() * height / width) / 2 * 2).toInt()
+                Presentation.createForWidthAndHeight(maxShortSide, h, Presentation.LAYOUT_SCALE_TO_FIT)
             }
             Effects(emptyList(), listOf(p))
         } else {
@@ -159,14 +164,19 @@ class Converter(context: Context) {
             .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
             .build()
 
+        // Cap the bitrate: the 1st-gen Chromecast only has 2.4 GHz Wi-Fi, shared with the phone streaming it.
+        val encoders = DefaultEncoderFactory.Builder(ctx)
+            .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
+            .build()
         val builder = Transformer.Builder(ctx)
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setEncoderFactory(encoders)
         if (fragmented) {
             builder.setMuxerFactory(
                 InAppMuxer.Factory.Builder()
                     .setOutputFragmentedMp4(true)
-                    .setFragmentDurationMs(2_000)
+                    .setFragmentDurationMs(1_000)
                     .build()
             )
         }
