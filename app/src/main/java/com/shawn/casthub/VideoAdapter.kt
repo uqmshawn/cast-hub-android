@@ -21,6 +21,8 @@ class VideoAdapter(
     private val compatOf: (Video) -> CompatResult?,
     private val onNeedCheck: (Video) -> Unit,
     private val hasSubtitles: (Video) -> Boolean,
+    private val progressOf: (Video) -> Int?,
+    private val isConverted: (Video) -> Boolean,
     private val onPlay: (Video) -> Unit,
     private val onSubtitles: (Video) -> Unit,
 ) : RecyclerView.Adapter<VideoAdapter.Holder>() {
@@ -54,7 +56,17 @@ class VideoAdapter(
 
         val c = compatOf(v)
         if (c == null) onNeedCheck(v)
-        when (c?.compat) {
+        val prog = progressOf(v)
+        when {
+            prog != null -> {
+                h.badge.text = "Converting for your Chromecast… $prog%"
+                h.badge.setTextColor(ContextCompat.getColor(context, R.color.accent))
+            }
+            isConverted(v) -> {
+                h.badge.text = "✓ Converted · ready to play"
+                h.badge.setTextColor(ContextCompat.getColor(context, R.color.ok))
+            }
+            else -> when (c?.compat) {
             Compat.READY -> {
                 h.badge.text = "✓ Ready  ${c.note}"
                 h.badge.setTextColor(ContextCompat.getColor(context, R.color.ok))
@@ -66,6 +78,7 @@ class VideoAdapter(
             else -> {
                 h.badge.text = "Checking format…"
                 h.badge.setTextColor(ContextCompat.getColor(context, R.color.muted))
+            }
             }
         }
 

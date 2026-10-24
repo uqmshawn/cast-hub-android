@@ -33,9 +33,18 @@ class MediaServer(private val ctx: Context, port: Int, private val token: String
     }
 
     private fun video(id: Long, session: IHTTPSession): Response {
-        val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-        val mime = ctx.contentResolver.getType(uri) ?: "video/mp4"
-        val pfd = ctx.contentResolver.openFileDescriptor(uri, "r") ?: return notFound()
+        // Prefer the Chromecast-friendly converted copy if one exists.
+        val converted = Converted.file(ctx, id)
+        val mime: String
+        val pfd: ParcelFileDescriptor
+        if (Converted.exists(ctx, id)) {
+            mime = "video/mp4"
+            pfd = ParcelFileDescriptor.open(converted, ParcelFileDescriptor.MODE_READ_ONLY)
+        } else {
+            val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+            mime = ctx.contentResolver.getType(uri) ?: "video/mp4"
+            pfd = ctx.contentResolver.openFileDescriptor(uri, "r") ?: return notFound()
+        }
         val size = pfd.statSize
 
         var start = 0L

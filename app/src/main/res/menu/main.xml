@@ -11,4 +11,8 @@
         android:title="Cast"
         app:actionProviderClass="androidx.mediarouter.app.MediaRouteActionProvider"
         app:showAsAction="always" />
+    <item
+        android:id="@+id/action_clear"
+        android:title="Delete converted copies"
+        app:showAsAction="never" />
 </menu>

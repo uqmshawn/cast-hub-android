@@ -9,6 +9,7 @@ import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
@@ -41,6 +42,8 @@ class MainActivity : AppCompatActivity() {
 
     private var allVideos: List<Video> = emptyList()
     private val compat = HashMap<Long, CompatResult>()
+    private val progress = HashMap<Long, Int>()
+    private lateinit var converter: Converter
     private val bg = Executors.newFixedThreadPool(2)
 
     /** Something the user asked to play before a TV was connected; played once they pick one. */
@@ -95,6 +98,7 @@ class MainActivity : AppCompatActivity() {
 
         @Suppress("DEPRECATION")
         castContext = CastContext.getSharedInstance(this)
+        converter = Converter(this)
 
         emptyView = findViewById(R.id.empty)
         search = findViewById(R.id.search)
@@ -105,6 +109,8 @@ class MainActivity : AppCompatActivity() {
             compatOf = { v -> compat[v.id] },
             onNeedCheck = { v -> checkCompat(v) },
             hasSubtitles = { v -> Subtitles.get(this, v.id) != null },
+            progressOf = { v -> progress[v.id] },
+            isConverted = { v -> Converted.exists(this, v.id) },
             onPlay = { v -> playVideo(v) },
             onSubtitles = { v -> subtitlesClicked(v) },
         )
@@ -144,6 +150,16 @@ class MainActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == R.id.action_refresh) {
             loadVideos()
+            return true
+        }
+        if (item.itemId == R.id.action_clear) {
+            if (converter.isBusy) {
+                toast("Wait for the current conversion to finish")
+            } else {
+                val freed = Converted.clearAll(this)
+                adapter.notifyDataSetChanged()
+                toast("Deleted converted copies (${freed / 1_000_000} MB freed)")
+            }
             return true
         }
         return super.onOptionsItemSelected(item)
@@ -243,17 +259,63 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playVideo(v: Video) {
+        if (progress.containsKey(v.id)) {
+            toast("Still converting — it will play when it's done")
+            return
+        }
+        if (Converted.exists(this, v.id)) {
+            castVideo(v)
+            return
+        }
         val r = compat[v.id]
         if (r?.compat == Compat.MAYBE_NOT) {
             MaterialAlertDialogBuilder(this)
-                .setTitle("This may not play")
-                .setMessage("${r.note}.\n\nThe 1st-gen Chromecast only plays MP4 (H.264 + AAC). Convert it on your PC with Cast Hub, or try anyway.")
-                .setPositiveButton("Try anyway") { _, _ -> castVideo(v) }
+                .setTitle("Convert for your Chromecast?")
+                .setMessage(
+                    "${r.note}.\n\nYour 1st-gen Chromecast can't play this format. Cast Hub will make a " +
+                        "compatible copy on this phone (usually quicker than the video's length), then play it on the TV."
+                )
+                .setPositiveButton("Convert & play") { _, _ -> convertThenPlay(v, r) }
+                .setNeutralButton("Try anyway") { _, _ -> castVideo(v) }
                 .setNegativeButton("Cancel", null)
                 .show()
         } else {
             castVideo(v)
         }
+    }
+
+    private fun convertThenPlay(v: Video, r: CompatResult) {
+        if (converter.isBusy) {
+            toast("Another video is converting — wait for it to finish")
+            return
+        }
+        progress[v.id] = 0
+        adapter.refresh(v.id)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        toast("Converting… keep Cast Hub open")
+        converter.convert(
+            v, r.width, r.height,
+            onProgress = { p ->
+                progress[v.id] = p
+                adapter.refresh(v.id)
+            },
+            onDone = { ok, err ->
+                progress.remove(v.id)
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                adapter.refresh(v.id)
+                if (ok) {
+                    toast("Converted — sending to the TV")
+                    castVideo(v)
+                } else {
+                    toast("Conversion failed: $err")
+                }
+            },
+        )
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) converter.cancel()
+        super.onDestroy()
     }
 
     private fun castVideo(v: Video) {
@@ -277,7 +339,7 @@ class MainActivity : AppCompatActivity() {
         }
         val builder = MediaInfo.Builder("$base/v/$token/${v.id}")
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(v.mime ?: "video/mp4")
+            .setContentType(if (Converted.exists(this, v.id)) "video/mp4" else v.mime ?: "video/mp4")
             .setMetadata(meta)
         if (v.durationMs > 0) builder.setStreamDuration(v.durationMs)
 

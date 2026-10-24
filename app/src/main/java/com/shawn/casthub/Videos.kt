@@ -21,7 +21,7 @@ data class Video(
 
 enum class Compat { CHECKING, READY, MAYBE_NOT }
 
-data class CompatResult(val compat: Compat, val note: String)
+data class CompatResult(val compat: Compat, val note: String, val width: Int = 0, val height: Int = 0)
 
 object Videos {
 
@@ -101,10 +101,10 @@ object Videos {
             val webmOk = container == "video/webm" && videoMime == "video/x-vnd.on2.vp8"
 
             return when {
-                (isMp4 && videoOk && audioOk) || webmOk -> CompatResult(Compat.READY, desc)
-                !videoOk -> CompatResult(Compat.MAYBE_NOT, "$desc — video format too new for this Chromecast")
-                !audioOk -> CompatResult(Compat.MAYBE_NOT, "$desc — may play without sound")
-                else -> CompatResult(Compat.MAYBE_NOT, "$desc — container may not play")
+                (isMp4 && videoOk && audioOk) || webmOk -> CompatResult(Compat.READY, desc, w, h)
+                !videoOk -> CompatResult(Compat.MAYBE_NOT, "$desc — needs converting", w, h)
+                !audioOk -> CompatResult(Compat.MAYBE_NOT, "$desc — sound needs converting", w, h)
+                else -> CompatResult(Compat.MAYBE_NOT, "$desc — needs converting", w, h)
             }
         } catch (e: Exception) {
             return CompatResult(Compat.MAYBE_NOT, "Couldn't read this file")
